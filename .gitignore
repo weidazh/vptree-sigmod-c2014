@@ -1,0 +1,5 @@
+libcore.so
+ref_impl/core.o
+test_driver/test.o
+testdriver
+
