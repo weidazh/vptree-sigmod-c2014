@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <algorithm>
 #include <vector>
+#include <set>
 #include <stdio.h>
 #include <queue>
 #include <limits>
@@ -24,34 +25,31 @@ public:
         _root = buildFromPoints(0, items.size());
     }
 
-    void search( const T& target, unsigned int k, std::vector<T>* results,
-        std::vector<S>* distances)
+    // now S must be int, not event unsigned int!
+    void search( const T& target, S tau,
+        std::set<T>* results)
     {
-        std::priority_queue<HeapItem> heap;
+        std::priority_queue<HeapItem> heap[tau];
 
-        _tau = std::numeric_limits<S>::max();
-        search(_root, target, k, heap );
+        _tau = tau; // std::numeric_limits<S>::max();
+        search(_root, target, heap);
 
-        results->clear(); distances->clear();
-
-        while( !heap.empty() ) {
-            results->push_back( _items[heap.top().index] );
-            distances->push_back( heap.top().dist );
-            heap.pop();
+        for (S i = 0; i < tau; i++) {
+            while( !heap[i].empty() ) {
+                results[i].insert(_items[heap[i].top().index] );
+                heap[i].pop();
+            }
         }
-
-        std::reverse( results->begin(), results->end() );
-        std::reverse( distances->begin(), distances->end() );
     }
 
 private:
     std::vector<T> _items;
-    double _tau;
+    S _tau;
 
     struct Node
     {
         int index;
-        double threshold;
+        S threshold;
         Node* left;
         Node* right;
 
@@ -65,10 +63,10 @@ private:
     }* _root;
 
     struct HeapItem {
-        HeapItem( int index, double dist) :
+        HeapItem( int index, S dist) :
             index(index), dist(dist) {}
         int index;
-        double dist;
+        S dist;
         bool operator<( const HeapItem& o ) const {
             return dist < o.dist;
         }
@@ -83,7 +81,7 @@ private:
         }
     };
 
-    Node* buildFromPoints( int lower, int upper )
+    Node* buildFromPoints( int lower, int upper ) // [lower, upper)
     {
         if ( upper == lower ) {
             return NULL;
@@ -105,7 +103,7 @@ private:
                 _items.begin() + lower + 1,
                 _items.begin() + median,
                 _items.begin() + upper,
-                DistanceComparator( _items[lower] ));
+                DistanceComparator( _items[lower] )); // [lower, i] < [lower, median]: left; [lower, i] >= [lower, median]: right
 
             // what was the median?
             node->threshold = distance( _items[lower], _items[median] );
@@ -118,18 +116,18 @@ private:
         return node;
     }
 
-    void search( Node* node, const T& target, unsigned int k,
-                 std::priority_queue<HeapItem>& heap )
+    void search( Node* node, const T& target,
+                 std::priority_queue<HeapItem>* heap )
     {
         if ( node == NULL ) return;
 
-        double dist = distance( _items[node->index], target );
+        S dist = distance( _items[node->index], target );
+
+        // fprintf(stderr, "%d: %s %s\n", dist, _items[node->index].c_str(), target.c_str());
         //printf("dist=%g tau=%gn", dist, _tau );
 
         if ( dist < _tau ) {
-            if ( heap.size() == k ) heap.pop();
-            heap.push( HeapItem(node->index, dist) );
-            if ( heap.size() == k ) _tau = heap.top().dist;
+            heap[dist].push(HeapItem(node->index, dist));
         }
 
         if ( node->left == NULL && node->right == NULL ) {
@@ -137,21 +135,21 @@ private:
         }
 
         if ( dist < node->threshold ) {
-            if ( dist - _tau <= node->threshold ) {
-                search( node->left, target, k, heap );
+            if ( dist - _tau < node->threshold ) {
+                search( node->left, target, heap );
             }
 
-            if ( dist + _tau >= node->threshold ) {
-                search( node->right, target, k, heap );
+            if ( dist + _tau > node->threshold ) {
+                search( node->right, target, heap );
             }
 
         } else {
-            if ( dist + _tau >= node->threshold ) {
-                search( node->right, target, k, heap );
+            if ( dist + _tau > node->threshold ) {
+                search( node->right, target, heap );
             }
 
-            if ( dist - _tau <= node->threshold ) {
-                search( node->left, target, k, heap );
+            if ( dist - _tau < node->threshold ) {
+                search( node->left, target, heap );
             }
         }
     }
