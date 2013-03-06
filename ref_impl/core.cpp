@@ -37,60 +37,50 @@ using namespace std;
 
 // Computes edit distance between a null-terminated string "a" with length "na"
 //  and a null-terminated string "b" with length "nb" 
-int EditDistance(const char* a, int na, const char* b, int nb)
-{
-	int oo=0x7FFFFFFF;
-
-	static int T[2][MAX_WORD_LENGTH+1];
-
-	int ia, ib;
-
-	int cur=0;
-	ia=0;
-
-	for(ib=0;ib<=nb;ib++)
-		T[cur][ib]=ib;
-
-	cur=1-cur;
-
-	for(ia=1;ia<=na;ia++)
-	{
-		for(ib=0;ib<=nb;ib++)
-			T[cur][ib]=oo;
-
-		int ib_st=0;
-		int ib_en=nb;
-
-		if(ib_st==0)
-		{
-			ib=0;
-			T[cur][ib]=ia;
-			ib_st++;
-		}
-
-		for(ib=ib_st;ib<=ib_en;ib++)
-		{
-			int ret=oo;
-
-			int d1=T[1-cur][ib]+1;
-			int d2=T[cur][ib-1]+1;
-			int d3=T[1-cur][ib-1]; if(a[ia-1]!=b[ib-1]) d3++;
-
-			if(d1<ret) ret=d1;
-			if(d2<ret) ret=d2;
-			if(d3<ret) ret=d3;
-
-			T[cur][ib]=ret;
-		}
-
-		cur=1-cur;
-	}
-
-	int ret=T[1-cur][nb];
-
-	return ret;
+static inline int min2(int v, int b) {
+	if (v < b)
+		return v;
+	else
+		return b;
 }
-
+#define likely(x) __builtin_expect((x),1)
+#define unlikely(x) __builtin_expect((x),0)
+static inline int EditDistanceCore(const char* a, int na, const char* b, int nb) {
+	static int T[2][MAX_WORD_LENGTH]; // gprof: static or not, no difference
+	int cur = 0;
+	int best;
+	// loop unrolling
+	{
+		best = T[cur][0] = (a[0] != b[0]);
+		for (int ib = 1; ib < nb; ib ++) { // do not use v, v1, v2, 0.5s faster
+			best = min2(best + 1,
+				ib + unlikely(a[0] != b[ib]));
+			T[cur][ib] = best;
+		}
+	}
+	for (int ia = 1; ia < na; ia++) {
+		cur = !cur;
+		T[cur][0] = min2(ia + (a[ia] != b[0]), T[!cur][0] + 1);
+		best = T[cur][0]; // use best, 0.8s faster
+		for (int ib = 1; ib < nb; ib ++) { // do not use v, v1, v2, 0.5s faster
+			if (unlikely(T[!cur][ib] < best))
+				best = T[!cur][ib];
+			best = min2(best + 1,
+				T[!cur][ib - 1] + unlikely(a[ia] != b[ib]));
+			// likely a = b? why? but test show me likely is 0.3s faster
+			T[cur][ib] = best;
+		}
+	}
+	return best;
+}
+int EditDistance(const char* a, int na, const char* b, int nb) {
+	if (na > nb) {
+		return EditDistanceCore(b, nb, a, na);
+	}
+	else {
+		return EditDistanceCore(a, na, b, nb);
+	}
+}
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 // Computes Hamming distance between a null-terminated string "a" with length "na"
