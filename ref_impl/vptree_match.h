@@ -7,6 +7,6 @@
 ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType match_type, unsigned int match_dist);
 ErrorCode VPTreeQueryRemove(QueryID query_id);
 // ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str);
-ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID> query_ids);
+ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids);
 
 #endif

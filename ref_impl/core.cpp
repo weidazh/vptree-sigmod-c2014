@@ -188,6 +188,7 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 	vector<unsigned int> query_ids;
 	vector<unsigned int> hamming_query_ids;
 
+	goto skip_to_vptree;
 	// Iterate on all active queries to compare them with this new document
 	for(i=0;i<n;i++)
 	{
@@ -260,6 +261,9 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 		}
 	}
 
+skip_to_vptree:
+	VPTreeMatchDocument(doc_id, doc_str, query_ids);
+
 	Document doc;
 	doc.doc_id=doc_id;
 	doc.num_res=query_ids.size();
@@ -269,7 +273,6 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 	// Add this result to the set of undelivered results
 	docs.push_back(doc);
 
-	VPTreeMatchDocument(doc_id, doc_str, query_ids);
 	return EC_SUCCESS;
 }
 

@@ -4,6 +4,7 @@
 #include <string>
 #include <cstring>
 #include <exception>
+#include <algorithm>
 #include <vector>
 #include <set>
 #include <map>
@@ -205,16 +206,11 @@ void do_union(std::set<T> * x, std::set<T> * y) {
 	}
 }
 
-ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID> query_ids)
+ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids)
 {
 	new_vptrees_unless_exists();
 	std::set<std::string> matchedHammingWords[4];
 	std::set<std::string> matchedEditWords[4];
-	std::set<QueryID> matchedQueries;
-
-	if (matchedQueries.size() != 0) {
-		fprintf(stderr, "matchedQueries is uninitialized\n");
-	}
 
 	ITERATE_QUERY_WORDS(doc_word, doc_str) {
 		std::string doc_word_string = word_to_string(doc_word); // SPEED UP: question, I cannot reuse the pointer doc_str, but can I change *doc_str? */
@@ -279,52 +275,13 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			}
 
 			if (match) {
-				matchedQueries.insert(query_id);
+				query_ids.push_back(query_id);
 			}
 		}
 	}
+
 	// performace: change iterator to const_iterator if possible.
-
-	bool correct = true;
-	if (matchedQueries.size() != query_ids.size()) {
-		fprintf(stderr, "Error, incorrect\n");
-		correct = false;
-	}
-
-	for(std::vector<QueryID>::iterator i = query_ids.begin();
-		i != query_ids.end();
-		i++) {
-
-		if (! matchedQueries.count(*i)) {
-			correct = false;
-		}
-	}
-
-	if (!correct) {
-		fprintf(stderr, "\n");
-		fprintf(stderr, "incorrect for doc_id = %d\n", doc_id);
-
-		fprintf(stderr, "correct: ");
-		for (std::vector<QueryID>::iterator i = query_ids.begin();
-			i != query_ids.end();
-			i++ )
-		{
-			Query& query = queryMap.find(*i)->second;
-			fprintf(stderr, "%d [%d,%d](%s)", *i, query.match_type, query.match_dist, query.getQueryStr());
-		}
-		fprintf(stderr, "\n");
-		fprintf(stderr, "my resu: ");
-		for (std::set<QueryID>::iterator i = matchedQueries.begin();
-			i != matchedQueries.end();
-			i++ )
-		{
-			fprintf(stderr, "%d ", *i);
-		}
-		fprintf(stderr, "\n");
-		exit(1);
-	}
-
-	// cmpare query_ids and matchedQueries
+	std::sort(query_ids.begin(), query_ids.end());
 
 	return EC_SUCCESS;
 }
