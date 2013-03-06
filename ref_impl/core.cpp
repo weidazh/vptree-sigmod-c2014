@@ -26,6 +26,7 @@
  */
 
 #include "../include/core.h"
+#include "vptree_match.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -94,7 +95,7 @@ int EditDistance(char* a, int na, char* b, int nb)
 
 // Computes Hamming distance between a null-terminated string "a" with length "na"
 //  and a null-terminated string "b" with length "nb" 
-unsigned int HammingDistance(char* a, int na, char* b, int nb)
+unsigned int HammingDistance(const char* a, int na, const char* b, int nb)
 {
 	int j, oo=0x7FFFFFFF;
 	if(na!=nb) return oo;
@@ -153,6 +154,8 @@ ErrorCode StartQuery(QueryID query_id, const char* query_str, MatchType match_ty
 	query.match_dist=match_dist;
 	// Add this query to the active query set
 	queries.push_back(query);
+
+	VPTreeQueryAdd(query_id, query_str, match_type, match_dist);
 	return EC_SUCCESS;
 }
 
@@ -170,6 +173,7 @@ ErrorCode EndQuery(QueryID query_id)
 			break;
 		}
 	}
+	VPTreeQueryRemove(query_id);
 	return EC_SUCCESS;
 }
 
@@ -182,6 +186,7 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 
 	unsigned int i, n=queries.size();
 	vector<unsigned int> query_ids;
+	vector<unsigned int> hamming_query_ids;
 
 	// Iterate on all active queries to compare them with this new document
 	for(i=0;i<n;i++)
@@ -249,6 +254,9 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 		{
 			// This query matches the document
 			query_ids.push_back(quer->query_id);
+			if (quer->match_type == MT_HAMMING_DIST) {
+			    hamming_query_ids.push_back(quer->query_id);
+			}
 		}
 	}
 
@@ -261,6 +269,7 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 	// Add this result to the set of undelivered results
 	docs.push_back(doc);
 
+	VPTreeMatchDocument(doc_id, doc_str, hamming_query_ids);
 	return EC_SUCCESS;
 }
 

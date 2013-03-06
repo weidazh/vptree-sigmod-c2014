@@ -29,7 +29,7 @@
 
 # Build targets (your implementation targets should go in IMPL_O)
 TEST_O=test_driver/test.o 
-IMPL_O=ref_impl/core.o
+IMPL_O=ref_impl/core.o ref_impl/vptree_match.o
 
 # Compiler flags
 CC  = gcc

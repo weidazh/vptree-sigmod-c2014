@@ -268,6 +268,7 @@ void TestSigmod(const char* test_file_str)
 			fflush(NULL);
 			return;
 		}
+		fprintf(stderr, "%c", ch);
 	}
 
 	v=GetClockTimeInMilliSec()-v;
