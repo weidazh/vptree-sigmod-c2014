@@ -133,7 +133,7 @@ struct Document
 vector<Query> queries;
 
 // Keeps all currently available results that has not been returned yet
-vector<Document> docs;
+vector<Document*> docs;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -264,12 +264,12 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 skip_to_vptree:
 	VPTreeMatchDocument(doc_id, doc_str, query_ids);
 
-	Document doc;
-	doc.doc_id=doc_id;
-	doc.num_res=query_ids.size();
-	doc.query_ids=0;
-	if(doc.num_res) doc.query_ids=(unsigned int*)malloc(doc.num_res*sizeof(unsigned int));
-	for(i=0;i<doc.num_res;i++) doc.query_ids[i]=query_ids[i];
+	Document* doc = new Document();
+	doc->doc_id=doc_id;
+	doc->num_res=query_ids.size();
+	doc->query_ids=0;
+	if(doc->num_res) doc->query_ids=(unsigned int*)malloc(doc->num_res*sizeof(unsigned int));
+	for(i=0;i<doc->num_res;i++) doc->query_ids[i]=query_ids[i];
 	// Add this result to the set of undelivered results
 	docs.push_back(doc);
 
@@ -280,11 +280,13 @@ skip_to_vptree:
 
 ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_query_ids)
 {
+	Document* doc = docs[0];
 	// Get the first undeliverd resuilt from "docs" and return it
 	*p_doc_id=0; *p_num_res=0; *p_query_ids=0;
 	if(docs.size()==0) return EC_NO_AVAIL_RES;
-	*p_doc_id=docs[0].doc_id; *p_num_res=docs[0].num_res; *p_query_ids=docs[0].query_ids;
+	*p_doc_id=doc->doc_id; *p_num_res=doc->num_res; *p_query_ids=doc->query_ids;
 	docs.erase(docs.begin());
+	delete doc;
 	return EC_SUCCESS;
 }
 

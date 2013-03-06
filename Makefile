@@ -31,15 +31,20 @@
 TEST_O=test_driver/test.o 
 IMPL_O=ref_impl/core.o ref_impl/vptree_match.o
 
+GPROF := n
+
+CFLAGS-y :=
+CFLAGS-$(GPROF) += -pg
+
 # Compiler flags
 CC  = gcc
 CXX = g++
-CFLAGS=-O3 -fPIC -Wall -g -I. -I./include
+CFLAGS=-O3 -fPIC -Wall -g -I. -I./include $(CFLAGS-y)
 CXXFLAGS=$(CFLAGS)
 LDFLAGS=-lpthread
 
 # The programs that will be built
-PROGRAMS=testdriver
+PROGRAMS=testdriver teststatic
 
 # The name of the library that will be built
 LIBRARY=core
@@ -51,8 +56,13 @@ lib: $(IMPL_O)
 	$(CXX) $(CXXFLAGS) -shared -o lib$(LIBRARY).so $(IMPL_O)
 
 testdriver: lib $(TEST_O)
-	$(CXX) $(CXXFLAGS) -o testdriver $(TEST_O) ./lib$(LIBRARY).so
+	$(CXX) $(CXXFLAGS) -o $@ $(TEST_O) ./lib$(LIBRARY).so
+
+teststatic: $(IMPL_O) $(TEST_O)
+	$(CXX) $(CXXFLAGS) -o $@ $(TEST_O) $(IMPL_O)
 
 clean:
 	rm -f $(PROGRAMS) lib$(LIBRARY).so
 	find . -name '*.o' -print | xargs rm -f
+
+ref_impl/vptree_match.o: ref_impl/vptree.h ref_impl/vptree_match.h
