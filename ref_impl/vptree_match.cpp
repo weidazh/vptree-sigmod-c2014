@@ -227,9 +227,14 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 	new_vptrees_unless_exists();
 	std::set<std::string> matchedHammingWords[4];
 	std::set<std::string> matchedEditWords[4];
+	std::set<std::string> docWords;
 
 	ITERATE_QUERY_WORDS(doc_word, doc_str) {
 		std::string doc_word_string = word_to_string(doc_word); // SPEED UP: question, I cannot reuse the pointer doc_str, but can I change *doc_str? */
+
+		if (docWords.count(doc_word_string))
+			continue;
+		docWords.insert(doc_word_string);
 
 		{
 			std::set<std::string> results[4];
