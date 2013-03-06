@@ -37,7 +37,7 @@ using namespace std;
 
 // Computes edit distance between a null-terminated string "a" with length "na"
 //  and a null-terminated string "b" with length "nb" 
-int EditDistance(char* a, int na, char* b, int nb)
+int EditDistance(const char* a, int na, const char* b, int nb)
 {
 	int oo=0x7FFFFFFF;
 
@@ -269,7 +269,7 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 	// Add this result to the set of undelivered results
 	docs.push_back(doc);
 
-	VPTreeMatchDocument(doc_id, doc_str, hamming_query_ids);
+	VPTreeMatchDocument(doc_id, doc_str, query_ids);
 	return EC_SUCCESS;
 }
 
