@@ -58,26 +58,39 @@ public:
 class Word {
 public:
 	std::string word;
-	std::set<QueryID> queries; // PERFORMANCE could be only a counter!
+	std::set<QueryID> hamming_queries; // PERFORMANCE could be only a counter!
+	std::set<QueryID> edit_queries; // PERFORMANCE could be only a counter!
 	std::set<QueryID> first_word_queries;
 
 	Word(std::string word)
-		: queries(), first_word_queries() {
+		: hamming_queries(), edit_queries(), first_word_queries() {
 		this->word = word;
 	}
-	void push_query(QueryID q, bool first) {
-		this->queries.insert(q);
+	void push_query(QueryID q, bool first, MatchType match_type) {
+		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
+			this->hamming_queries.insert(q);
+		if (match_type == MT_EDIT_DIST)
+			this->edit_queries.insert(q);
 		if (first)
 			this->first_word_queries.insert(q);
 	}
-	void remove_query(QueryID q) {
-		this->queries.erase(q);
+	void remove_query(QueryID q, MatchType match_type) {
+		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
+			this->hamming_queries.erase(q);
+		if (match_type == MT_EDIT_DIST)
+			this->edit_queries.erase(q);
 	}
 	void remove_first_word_query(QueryID q) {
 		this->first_word_queries.erase(q);
 	}
 	bool empty() {
-		return this->queries.empty();
+		return this->hamming_queries.empty() && this->edit_queries.empty();
+	}
+	bool hasHamming() {
+		return ! this->hamming_queries.empty();
+	}
+	bool hasEdit() {
+		return ! this->edit_queries.empty();
 	}
 };
 
@@ -90,7 +103,6 @@ HammingVpTree* hamming_vptree;
 EditVpTree* edit_vptree;
 typedef std::map<QueryID, Query&> QueryMap;
 QueryMap queryMap;
-std::vector<std::string> wordList;
 
 const char* next_word_in_query(const char* query_str) {
 	while (NON_NULL(query_str))
@@ -115,17 +127,21 @@ std::string word_to_string(const char* word) {
 #define ITERATE_QUERY_WORDS(key, begin) for (const char* (key) = (begin); *(key); (key) = next_word_in_query((key)))
 
 void new_vptrees_unless_exists() {
+	std::vector<std::string> hammingWordList;
+	std::vector<std::string> editWordList;
 	if (! hamming_vptree) {
 		hamming_vptree = new HammingVpTree();
 		edit_vptree = new EditVpTree();
-		wordList.clear();
 		for(std::map<std::string, Word&>::iterator i = wordMap.begin();
 			i != wordMap.end(); i++) {
 
-			wordList.push_back(i->first);
+			if (i->second.hasHamming())
+				hammingWordList.push_back(i->first);
+			if (i->second.hasEdit())
+				editWordList.push_back(i->first);
 		}
-		hamming_vptree->create(wordList);
-		edit_vptree->create(wordList);
+		hamming_vptree->create(hammingWordList);
+		edit_vptree->create(editWordList);
 	}
 }
 
@@ -148,11 +164,11 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 		WordMap::iterator found = wordMap.find(query_word_string);
 
 		if (found != wordMap.end()) {
-			found->second.push_query(query_id, first);
+			found->second.push_query(query_id, first, match_type);
 		}
 		else {
 			Word* word = new Word(query_word_string);
-			word->push_query(query_id, first);
+			word->push_query(query_id, first, match_type);
 			wordMap.insert(std::pair<std::string, Word&>(query_word_string, *word));
 			// wordSet.insert(query_word_string);
 		}
@@ -178,7 +194,7 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 			continue;
 		}
 		Word* word = &(word_found->second);
-		word->remove_query(query_id);
+		word->remove_query(query_id, query.match_type);
 		// BUG: if the same query appears twice in a word?
 		if (first)
 			word->remove_first_word_query(query_id);
@@ -242,9 +258,13 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 	do_union(&matchedHammingWords[2], &matchedHammingWords[1]);
 	do_union(&matchedHammingWords[3], &matchedHammingWords[2]);
 
+	do_union(&matchedEditWords[0], &matchedHammingWords[0]);
 	do_union(&matchedEditWords[1], &matchedEditWords[0]);
+	do_union(&matchedEditWords[1], &matchedHammingWords[1]);
 	do_union(&matchedEditWords[2], &matchedEditWords[1]);
+	do_union(&matchedEditWords[2], &matchedHammingWords[2]);
 	do_union(&matchedEditWords[3], &matchedEditWords[2]);
+	do_union(&matchedEditWords[3], &matchedHammingWords[3]);
 
 	for(std::set<std::string>::iterator i = matchedEditWords[3].begin();
 		i != matchedEditWords[3].end();
