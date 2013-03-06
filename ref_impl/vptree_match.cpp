@@ -39,6 +39,7 @@ class Query {
 private:
 	char query_str[MAX_QUERY_LENGTH];
 public:
+	int word_ids[MAX_QUERY_WORDS];
 	QueryID query_id;
 	MatchType match_type;
 	unsigned int match_dist;
@@ -48,6 +49,8 @@ public:
 		strcpy(this->query_str, query_str);
 		this->match_type = match_type;
 		this->match_dist = match_dist;
+		for (int i = 0; i < MAX_QUERY_WORDS; i++)
+			word_ids[i] = -1;
 	}
 
 	const char* getQueryStr() {
@@ -55,16 +58,21 @@ public:
 	}
 };
 
+static int max_word_id = 0;
+
 class Word {
 public:
 	std::string word;
 	std::set<QueryID> hamming_queries; // PERFORMANCE could be only a counter!
 	std::set<QueryID> edit_queries; // PERFORMANCE could be only a counter!
 	std::set<QueryID> first_word_queries;
+	int word_id;
 
 	Word(std::string word)
-		: hamming_queries(), edit_queries(), first_word_queries() {
-		this->word = word;
+		: word(word), hamming_queries(), edit_queries(), first_word_queries() {
+
+		word_id = max_word_id;
+		max_word_id += 1;
 	}
 	void push_query(QueryID q, bool first, MatchType match_type) {
 		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
@@ -83,6 +91,9 @@ public:
 	void remove_first_word_query(QueryID q) {
 		this->first_word_queries.erase(q);
 	}
+	int id() {
+		return word_id;
+	}
 	bool empty() {
 		return this->hamming_queries.empty() && this->edit_queries.empty();
 	}
@@ -95,7 +106,9 @@ public:
 };
 
 typedef std::map<std::string, Word&> WordMap;
+typedef std::map<int, Word&> WordMapByID;
 WordMap wordMap;
+WordMapByID wordMapByID;
 // std::set<std::string> wordSet;
 typedef VpTree<std::string, int, hamming> HammingVpTree;
 typedef VpTree<std::string, int, edit> EditVpTree;
@@ -104,7 +117,7 @@ EditVpTree* edit_vptree;
 typedef std::map<QueryID, Query&> QueryMap;
 QueryMap queryMap;
 
-const char* next_word_in_query(const char* query_str) {
+static const char* next_word_in_query(const char* query_str) {
 	while (NON_NULL(query_str))
 		query_str ++;
 	while (*query_str == ' ')
@@ -112,7 +125,7 @@ const char* next_word_in_query(const char* query_str) {
 	return query_str;
 }
 
-std::string word_to_string(const char* word) {
+static std::string word_to_string(const char* word) {
 	char w[MAX_WORD_LENGTH + 1];
 	char* p = w;
 	while(NON_NULL(word)) {
@@ -126,7 +139,7 @@ std::string word_to_string(const char* word) {
 
 #define ITERATE_QUERY_WORDS(key, begin) for (const char* (key) = (begin); *(key); (key) = next_word_in_query((key)))
 
-void new_vptrees_unless_exists() {
+static void new_vptrees_unless_exists() {
 	std::vector<std::string> hammingWordList;
 	std::vector<std::string> editWordList;
 	if (! hamming_vptree) {
@@ -145,7 +158,7 @@ void new_vptrees_unless_exists() {
 	}
 }
 
-void clear_vptrees() {
+static void clear_vptrees() {
 	if (hamming_vptree) {
 		delete hamming_vptree;
 		delete edit_vptree;
@@ -159,20 +172,32 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 	Query* q = new Query(query_id, query_str, match_type, match_dist);
 	queryMap.insert(std::pair<QueryID, Query&>(query_id, *q));
 	bool first = true;
+	int i = 0;
 	ITERATE_QUERY_WORDS(query_word, query_str) {
 		std::string query_word_string = word_to_string(query_word);
 		WordMap::iterator found = wordMap.find(query_word_string);
-
+		Word* word;
 		if (found != wordMap.end()) {
-			found->second.push_query(query_id, first, match_type);
+			word = &(found->second);
+			word->push_query(query_id, first, match_type);
 		}
 		else {
-			Word* word = new Word(query_word_string);
+			word = new Word(query_word_string);
 			word->push_query(query_id, first, match_type);
 			wordMap.insert(std::pair<std::string, Word&>(query_word_string, *word));
+			wordMapByID.insert(std::pair<int, Word&>(word->id(), *word));
 			// wordSet.insert(query_word_string);
 		}
+		if (i >= MAX_QUERY_WORDS)
+		{
+			fprintf(stderr, "ERROR! exceed MAX_QUERY_WORDS\n");
+		}
+		q->word_ids[i] = word->id();
+		i ++;
 		first = false;
+	}
+	for (; i < MAX_QUERY_WORDS; i++) {
+		q->word_ids[i] = -1;
 	}
 	return EC_SUCCESS;
 }
@@ -202,6 +227,7 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 			// dispose or delay disposing!
 			// wordSet.erase(query_word_string);
 			wordMap.erase(word_found);
+			wordMapByID.erase(word->id());
 
 			delete word;
 		}
@@ -212,8 +238,17 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 	return EC_SUCCESS;
 }
 
+static void do_union_x(std::set<int> * x, std::set<std::string> * y) {
+	for(typename std::set<std::string>::iterator i = y->begin();
+		i != y->end();
+		i++) {
+
+		x->insert(wordMap.find(*i)->second.id());
+	}
+}
+
 template <typename T>
-void do_union(std::set<T> * x, std::set<T> * y) {
+static void do_union(std::set<T> * x, std::set<T> * y) {
 	for(typename std::set<T>::iterator i = y->begin();
 		i != y->end();
 		i++) {
@@ -225,8 +260,8 @@ void do_union(std::set<T> * x, std::set<T> * y) {
 ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids)
 {
 	new_vptrees_unless_exists();
-	std::set<std::string> matchedHammingWords[4];
-	std::set<std::string> matchedEditWords[4];
+	std::set<int> matchedHammingWords[4];
+	std::set<int> matchedEditWords[4];
 	std::set<std::string> docWords;
 
 	ITERATE_QUERY_WORDS(doc_word, doc_str) {
@@ -241,10 +276,10 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 
 			hamming_vptree->search(doc_word_string, 4, results);
 
-			do_union(&matchedHammingWords[0], &results[0]);
-			do_union(&matchedHammingWords[1], &results[1]);
-			do_union(&matchedHammingWords[2], &results[2]);
-			do_union(&matchedHammingWords[3], &results[3]);
+			do_union_x(&matchedHammingWords[0], &results[0]);
+			do_union_x(&matchedHammingWords[1], &results[1]);
+			do_union_x(&matchedHammingWords[2], &results[2]);
+			do_union_x(&matchedHammingWords[3], &results[3]);
 		}
 
 		{
@@ -252,10 +287,10 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 
 			edit_vptree->search(doc_word_string, 4, results);
 
-			do_union(&matchedEditWords[0], &results[0]);
-			do_union(&matchedEditWords[1], &results[1]);
-			do_union(&matchedEditWords[2], &results[2]);
-			do_union(&matchedEditWords[3], &results[3]);
+			do_union_x(&matchedEditWords[0], &results[0]);
+			do_union_x(&matchedEditWords[1], &results[1]);
+			do_union_x(&matchedEditWords[2], &results[2]);
+			do_union_x(&matchedEditWords[3], &results[3]);
 		}
 	}
 
@@ -271,11 +306,11 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 	do_union(&matchedEditWords[3], &matchedEditWords[2]);
 	do_union(&matchedEditWords[3], &matchedHammingWords[3]);
 
-	for(std::set<std::string>::iterator i = matchedEditWords[3].begin();
+	for(std::set<int>::iterator i = matchedEditWords[3].begin();
 		i != matchedEditWords[3].end();
 		i++) {
 
-		Word& word = wordMap.find(*i)->second;
+		Word& word = wordMapByID.find(*i)->second;
 		for(std::set<QueryID>::iterator j = word.first_word_queries.begin();
 			j != word.first_word_queries.end();
 			j++) {
@@ -284,15 +319,15 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 
 			QueryID query_id = *j;
 			Query& query = queryMap.find(query_id)->second;
-			ITERATE_QUERY_WORDS(query_word, query.getQueryStr()) {
-				std::string query_word_string = word_to_string(query_word);
+			for (int j = 0; j < MAX_QUERY_WORDS && query.word_ids[j] != -1; j++) {
+				int id = query.word_ids[j];
 				// if query is hamming
 				if ((query.match_type == MT_EXACT_MATCH &&
-					! matchedHammingWords[0].count(query_word_string)) ||
+					! matchedHammingWords[0].count(id)) ||
 				    (query.match_type == MT_HAMMING_DIST &&
-					! matchedHammingWords[query.match_dist].count(query_word_string)) ||
+					! matchedHammingWords[query.match_dist].count(id)) ||
 				    (query.match_type == MT_EDIT_DIST &&
-					! matchedEditWords[query.match_dist].count(query_word_string))) {
+					! matchedEditWords[query.match_dist].count(id))) {
 
 					match = false;
 					break;
