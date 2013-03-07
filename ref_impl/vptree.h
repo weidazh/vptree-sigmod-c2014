@@ -16,7 +16,7 @@ public:
     VpTree() : _root(0) {}
 
     ~VpTree() {
-        fprintf(stderr, "%d / %d = %.3f, %d\n", perf_nodes_visited, perf_num_searched, (double) perf_nodes_visited / perf_num_searched, _items.size());
+        // fprintf(stderr, "%d / %d = %.3f, %d\n", perf_nodes_visited, perf_num_searched, (double) perf_nodes_visited / perf_num_searched, _items.size());
         delete _root;
     }
 

@@ -110,11 +110,23 @@ struct Query
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 // Keeps all query ID results associated with a dcoument
-struct Document
+struct DocumentResults
 {
 	DocID doc_id;
 	unsigned int num_res;
 	QueryID* query_ids;
+
+	DocumentResults(DocID doc_id, std::vector<QueryID> query_ids):
+		doc_id(doc_id),
+		num_res(query_ids.size()) {
+		QueryID* p = (QueryID*) malloc(num_res * sizeof(QueryID));
+		this->query_ids = p;
+		for (std::vector<QueryID>::iterator i = query_ids.begin();
+			i != query_ids.end();
+			i++, p++) {
+			*p = *i;
+		}
+	}
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -123,7 +135,7 @@ struct Document
 vector<Query> queries;
 
 // Keeps all currently available results that has not been returned yet
-vector<Document*> docs;
+vector<DocumentResults*> docs;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -174,93 +186,11 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 	char cur_doc_str[MAX_DOC_LENGTH];
 	strcpy(cur_doc_str, doc_str);
 
-	unsigned int i, n=queries.size();
 	vector<unsigned int> query_ids;
-	vector<unsigned int> hamming_query_ids;
 
-	goto skip_to_vptree;
-	// Iterate on all active queries to compare them with this new document
-	for(i=0;i<n;i++)
-	{
-		bool matching_query=true;
-		Query* quer=&queries[i];
-
-		int iq=0;
-		while(quer->str[iq] && matching_query)
-		{
-			while(quer->str[iq]==' ') iq++;
-			if(!quer->str[iq]) break;
-			char* qword=&quer->str[iq];
-
-			int lq=iq;
-			while(quer->str[iq] && quer->str[iq]!=' ') iq++;
-			char qt=quer->str[iq];
-			quer->str[iq]=0;
-			lq=iq-lq;
-
-			bool matching_word=false;
-
-			int id=0;
-			while(cur_doc_str[id] && !matching_word)
-			{
-				while(cur_doc_str[id]==' ') id++;
-				if(!cur_doc_str[id]) break;
-				char* dword=&cur_doc_str[id];
-
-				int ld=id;
-				while(cur_doc_str[id] && cur_doc_str[id]!=' ') id++;
-				char dt=cur_doc_str[id];
-				cur_doc_str[id]=0;
-
-				ld=id-ld;
-
-				if(quer->match_type==MT_EXACT_MATCH)
-				{
-					if(strcmp(qword, dword)==0) matching_word=true;
-				}
-				else if(quer->match_type==MT_HAMMING_DIST)
-				{
-					unsigned int num_mismatches=HammingDistance(qword, lq, dword, ld);
-					if(num_mismatches<=quer->match_dist) matching_word=true;
-				}
-				else if(quer->match_type==MT_EDIT_DIST)
-				{
-					unsigned int edit_dist=EditDistance(qword, lq, dword, ld);
-					if(edit_dist<=quer->match_dist) matching_word=true;
-				}
-
-				cur_doc_str[id]=dt;
-			}
-
-			quer->str[iq]=qt;
-
-			if(!matching_word)
-			{
-				// This query has a word that does not match any word in the document
-				matching_query=false;
-			}
-		}
-
-		if(matching_query)
-		{
-			// This query matches the document
-			query_ids.push_back(quer->query_id);
-			if (quer->match_type == MT_HAMMING_DIST) {
-			    hamming_query_ids.push_back(quer->query_id);
-			}
-		}
-	}
-
-skip_to_vptree:
 	VPTreeMatchDocument(doc_id, doc_str, query_ids);
 
-	Document* doc = new Document();
-	doc->doc_id=doc_id;
-	doc->num_res=query_ids.size();
-	doc->query_ids=0;
-	if(doc->num_res) doc->query_ids=(unsigned int*)malloc(doc->num_res*sizeof(unsigned int));
-	for(i=0;i<doc->num_res;i++) doc->query_ids[i]=query_ids[i];
-	// Add this result to the set of undelivered results
+	DocumentResults* doc = new DocumentResults(doc_id, query_ids);
 	docs.push_back(doc);
 
 	return EC_SUCCESS;
@@ -270,14 +200,22 @@ skip_to_vptree:
 
 ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_query_ids)
 {
-	Document* doc = docs[0];
 	// Get the first undeliverd resuilt from "docs" and return it
-	*p_doc_id=0; *p_num_res=0; *p_query_ids=0;
-	if(docs.size()==0) return EC_NO_AVAIL_RES;
-	*p_doc_id=doc->doc_id; *p_num_res=doc->num_res; *p_query_ids=doc->query_ids;
-	docs.erase(docs.begin());
-	delete doc;
-	return EC_SUCCESS;
+	if (docs.size() == 0) {
+		*p_doc_id = 0;
+		*p_num_res = 0;
+		*p_query_ids = 0;
+		return EC_NO_AVAIL_RES;
+	}
+	else {
+		DocumentResults* doc = docs[0];
+		docs.erase(docs.begin());
+		*p_doc_id = doc->doc_id;
+		*p_num_res = doc->num_res;
+		*p_query_ids = doc->query_ids;
+		delete doc;
+		return EC_SUCCESS;
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
