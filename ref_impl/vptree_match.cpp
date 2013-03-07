@@ -65,47 +65,53 @@ public:
 static int max_word_id = 0;
 
 class Word {
-public:
 	std::string word;
-	std::set<QueryID> hamming_queries; // PERFORMANCE could be only a counter!
-	std::set<QueryID> edit_queries; // PERFORMANCE could be only a counter!
+	int hamming_queries;
+	int edit_queries;
 	std::set<QueryID> first_word_queries;
 	int word_id;
 
+public:
 	Word(std::string word)
-		: word(word), hamming_queries(), edit_queries(), first_word_queries() {
+		: word(word), hamming_queries(0), edit_queries(0), first_word_queries() {
 
 		word_id = max_word_id;
 		max_word_id += 1;
 	}
 	void push_query(QueryID q, bool first, MatchType match_type) {
 		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
-			this->hamming_queries.insert(q);
+			this->hamming_queries += 1;
 		if (match_type == MT_EDIT_DIST)
-			this->edit_queries.insert(q);
+			this->edit_queries += 1;
 		if (first)
 			this->first_word_queries.insert(q);
 	}
 	void remove_query(QueryID q, MatchType match_type) {
 		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
-			this->hamming_queries.erase(q);
+			this->hamming_queries -= 1;
 		if (match_type == MT_EDIT_DIST)
-			this->edit_queries.erase(q);
+			this->edit_queries -= 1;
 	}
 	void remove_first_word_query(QueryID q) {
 		this->first_word_queries.erase(q);
 	}
-	int id() {
+	std::set<QueryID>::iterator begin() const{
+		return first_word_queries.begin();
+	}
+	std::set<QueryID>::iterator end() const{
+		return first_word_queries.end();
+	}
+	int id() const {
 		return word_id;
 	}
-	bool empty() {
-		return this->hamming_queries.empty() && this->edit_queries.empty();
+	bool empty() const {
+		return this->hamming_queries == 0 && this->edit_queries == 0;
 	}
-	bool hasHamming() {
-		return ! this->hamming_queries.empty();
+	bool hasHamming() const {
+		return !! this->hamming_queries;
 	}
-	bool hasEdit() {
-		return ! this->edit_queries.empty();
+	bool hasEdit() const {
+		return !! this->edit_queries;
 	}
 };
 
@@ -318,8 +324,8 @@ void words_to_queries(SET* matchedHammingWords, SET* matchedEditWords, std::vect
 		i++) {
 
 		Word& word = wordMapByID.find(*i)->second;
-		for(std::set<QueryID>::iterator j = word.first_word_queries.begin();
-			j != word.first_word_queries.end();
+		for(std::set<QueryID>::iterator j = word.begin();
+			j != word.end();
 			j++) {
 
 			bool match = true;

@@ -199,7 +199,7 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 
 	vector<unsigned int> query_ids;
 
-	VPTreeMatchDocument(doc_id, doc_str, query_ids);
+	VPTreeMatchDocument(doc_id, cur_doc_str, query_ids);
 
 	DocumentResults* doc = new DocumentResults(doc_id, query_ids);
 	docs.push_back(doc);
