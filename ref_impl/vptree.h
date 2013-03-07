@@ -31,7 +31,7 @@ public:
 
     // now S must be int, not event unsigned int!
     void search( const T& target, S tau,
-        std::set<T>* results)
+        std::vector<T>* results)
     {
         std::priority_queue<HeapItem> heap[tau];
 
@@ -42,7 +42,7 @@ public:
 
         for (S i = 0; i < tau; i++) {
             while( !heap[i].empty() ) {
-                results[i].insert(_items[heap[i].top().index] );
+                results[i].push_back(_items[heap[i].top().index] );
                 heap[i].pop();
             }
         }

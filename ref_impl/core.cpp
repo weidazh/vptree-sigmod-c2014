@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <vector>
+#include <ctime>
 using namespace std;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -98,6 +99,7 @@ unsigned int HammingDistance(const char* a, int na, const char* b, int nb)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
+#if 0
 // Keeps all information related to an active query
 struct Query
 {
@@ -106,7 +108,7 @@ struct Query
 	MatchType match_type;
 	unsigned int match_dist;
 };
-
+#endif
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 // Keeps all query ID results associated with a dcoument
@@ -131,15 +133,20 @@ struct DocumentResults
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
+#if 0
 // Keeps all currently active queries
 vector<Query> queries;
+#endif
 
 // Keeps all currently available results that has not been returned yet
 vector<DocumentResults*> docs;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
-ErrorCode InitializeIndex(){return EC_SUCCESS;}
+ErrorCode InitializeIndex(){
+	srand(time(NULL));
+	return EC_SUCCESS;
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -149,6 +156,7 @@ ErrorCode DestroyIndex(){return EC_SUCCESS;}
 
 ErrorCode StartQuery(QueryID query_id, const char* query_str, MatchType match_type, unsigned int match_dist)
 {
+#if 0
 	Query query;
 	query.query_id=query_id;
 	strcpy(query.str, query_str);
@@ -156,6 +164,7 @@ ErrorCode StartQuery(QueryID query_id, const char* query_str, MatchType match_ty
 	query.match_dist=match_dist;
 	// Add this query to the active query set
 	queries.push_back(query);
+#endif
 
 	VPTreeQueryAdd(query_id, query_str, match_type, match_dist);
 	return EC_SUCCESS;
@@ -165,6 +174,7 @@ ErrorCode StartQuery(QueryID query_id, const char* query_str, MatchType match_ty
 
 ErrorCode EndQuery(QueryID query_id)
 {
+#if 0
 	// Remove this query from the active query set
 	unsigned int i, n=queries.size();
 	for(i=0;i<n;i++)
@@ -175,6 +185,7 @@ ErrorCode EndQuery(QueryID query_id)
 			break;
 		}
 	}
+#endif
 	VPTreeQueryRemove(query_id);
 	return EC_SUCCESS;
 }

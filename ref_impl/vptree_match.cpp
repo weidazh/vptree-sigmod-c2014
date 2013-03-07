@@ -16,10 +16,13 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 
 #define TAU 4
 
+static int perf_counter_hamming = 0;
+static int perf_counter_edit = 0;
 // must be int
 int hamming(const std::string& a, const std::string& b) {
 	unsigned int oo = 0x7FFFFFFF;
 	unsigned int dist = HammingDistance(a.c_str(), a.length(), b.c_str(), b.length());
+	perf_counter_hamming += 1;
 	if (dist == oo) {
 		return oo - TAU;
 	}
@@ -29,6 +32,7 @@ int hamming(const std::string& a, const std::string& b) {
 int edit(const std::string& a, const std::string& b) {
 	unsigned int oo = 0x7FFFFFFF;
 	unsigned int dist = EditDistance(a.c_str(), a.length(), b.c_str(), b.length());
+	perf_counter_edit += 1;
 	if (dist == oo) {
 		return oo - TAU;
 	}
@@ -117,6 +121,22 @@ EditVpTree* edit_vptree;
 typedef std::map<QueryID, Query&> QueryMap;
 QueryMap queryMap;
 
+
+class ResultSet {
+public:
+	int* results_hamming[TAU];
+	int* results_edit[TAU];
+	~ResultSet() {
+		for(int i = 0; i < TAU; i++)
+			free(results_hamming[i]);
+		for(int i = 0; i < TAU; i++)
+			free(results_edit[i]);
+	}
+};
+
+typedef std::map<std::string, ResultSet*> ResultCache;
+ResultCache resultCache;
+
 static const char* next_word_in_query(const char* query_str) {
 	while (NON_NULL(query_str))
 		query_str ++;
@@ -139,6 +159,8 @@ static std::string word_to_string(const char* word) {
 
 #define ITERATE_QUERY_WORDS(key, begin) for (const char* (key) = (begin); *(key); (key) = next_word_in_query((key)))
 
+int old_perf_hamming;
+int old_perf_edit;
 static void new_vptrees_unless_exists() {
 	std::vector<std::string> hammingWordList;
 	std::vector<std::string> editWordList;
@@ -153,8 +175,21 @@ static void new_vptrees_unless_exists() {
 			if (i->second.hasEdit())
 				editWordList.push_back(i->first);
 		}
+		fprintf(stdout, "searching hamming/edit = %d/%d\n", perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
+		old_perf_hamming = perf_counter_hamming;
+		old_perf_edit = perf_counter_edit;
 		hamming_vptree->create(hammingWordList);
 		edit_vptree->create(editWordList);
+		fprintf(stdout, "indexing hamming/edit = %d/%d\n", perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
+		old_perf_hamming = perf_counter_hamming;
+		old_perf_edit = perf_counter_edit;
+
+		for(ResultCache::iterator i = resultCache.begin();
+			i != resultCache.end();
+			i++ ) {
+			delete i->second;
+		}
+		resultCache.clear();
 	}
 }
 
@@ -238,8 +273,10 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 	return EC_SUCCESS;
 }
 
-static void do_union_x(std::set<int> * x, std::set<std::string> * y) {
-	for(typename std::set<std::string>::iterator i = y->begin();
+typedef std::set<int> SET;
+
+static void do_union_x(SET * x, std::vector<std::string> * y) {
+	for(typename std::vector<std::string>::iterator i = y->begin();
 		i != y->end();
 		i++) {
 
@@ -247,9 +284,27 @@ static void do_union_x(std::set<int> * x, std::set<std::string> * y) {
 	}
 }
 
-template <typename T>
-static void do_union(std::set<T> * x, std::set<T> * y) {
-	for(typename std::set<T>::iterator i = y->begin();
+static int* do_union_y(std::vector<std::string>* y) {
+	int* x = (int*)malloc(y->size() * sizeof(int) + 1);
+	int j = 0;
+	for(typename std::vector<std::string>::iterator i = y->begin();
+		i != y->end();
+		i++, j++) {
+
+		x[j] = wordMap.find(*i)->second.id();
+	}
+	x[j] = -1;
+	return x;
+}
+
+static void do_union(SET* x, int** y) {
+	for(int* p = *y; *p >=0; p++) {
+		x->insert(*p);
+	}
+}
+
+static void do_union(SET* x, SET* y) {
+	for(typename SET::iterator i = y->begin();
 		i != y->end();
 		i++) {
 
@@ -257,56 +312,8 @@ static void do_union(std::set<T> * x, std::set<T> * y) {
 	}
 }
 
-ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids)
-{
-	new_vptrees_unless_exists();
-	std::set<int> matchedHammingWords[4];
-	std::set<int> matchedEditWords[4];
-	std::set<std::string> docWords;
-
-	ITERATE_QUERY_WORDS(doc_word, doc_str) {
-		std::string doc_word_string = word_to_string(doc_word); // SPEED UP: question, I cannot reuse the pointer doc_str, but can I change *doc_str? */
-
-		if (docWords.count(doc_word_string))
-			continue;
-		docWords.insert(doc_word_string);
-
-		{
-			std::set<std::string> results[4];
-
-			hamming_vptree->search(doc_word_string, 4, results);
-
-			do_union_x(&matchedHammingWords[0], &results[0]);
-			do_union_x(&matchedHammingWords[1], &results[1]);
-			do_union_x(&matchedHammingWords[2], &results[2]);
-			do_union_x(&matchedHammingWords[3], &results[3]);
-		}
-
-		{
-			std::set<std::string> results[4];
-
-			edit_vptree->search(doc_word_string, 4, results);
-
-			do_union_x(&matchedEditWords[0], &results[0]);
-			do_union_x(&matchedEditWords[1], &results[1]);
-			do_union_x(&matchedEditWords[2], &results[2]);
-			do_union_x(&matchedEditWords[3], &results[3]);
-		}
-	}
-
-	do_union(&matchedHammingWords[1], &matchedHammingWords[0]);
-	do_union(&matchedHammingWords[2], &matchedHammingWords[1]);
-	do_union(&matchedHammingWords[3], &matchedHammingWords[2]);
-
-	do_union(&matchedEditWords[0], &matchedHammingWords[0]);
-	do_union(&matchedEditWords[1], &matchedEditWords[0]);
-	do_union(&matchedEditWords[1], &matchedHammingWords[1]);
-	do_union(&matchedEditWords[2], &matchedEditWords[1]);
-	do_union(&matchedEditWords[2], &matchedHammingWords[2]);
-	do_union(&matchedEditWords[3], &matchedEditWords[2]);
-	do_union(&matchedEditWords[3], &matchedHammingWords[3]);
-
-	for(std::set<int>::iterator i = matchedEditWords[3].begin();
+void words_to_queries(SET* matchedHammingWords, SET* matchedEditWords, std::vector<QueryID>& query_ids) {
+	for(SET::iterator i = matchedEditWords[3].begin();
 		i != matchedEditWords[3].end();
 		i++) {
 
@@ -339,6 +346,60 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			}
 		}
 	}
+}
+ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids)
+{
+	new_vptrees_unless_exists();
+	SET matchedHammingWords[TAU];
+	SET matchedEditWords[TAU];
+	std::set<std::string> docWords;
+
+	// int old_perf_hamming = perf_counter_hamming;
+	// int old_perf_edit = perf_counter_edit;
+	ITERATE_QUERY_WORDS(doc_word, doc_str) {
+		std::string doc_word_string = word_to_string(doc_word); // SPEED UP: question, I cannot reuse the pointer doc_str, but can I change *doc_str? */
+
+		if (docWords.count(doc_word_string))
+			continue;
+		docWords.insert(doc_word_string);
+
+		ResultCache::iterator found = resultCache.find(doc_word_string);
+		ResultSet* rs;
+
+		if (found == resultCache.end()) {
+			rs = new ResultSet();
+			std::vector<std::string> results[TAU];
+			hamming_vptree->search(doc_word_string, TAU, results);
+			for (int i = 0; i< TAU; i++) {
+				rs->results_hamming[i] = do_union_y(&results[i]);
+				results[i].clear();
+			}
+			edit_vptree->search(doc_word_string, TAU, results);
+			for (int i = 0; i< TAU; i++)
+				rs->results_edit[i] = do_union_y(&results[i]);
+			resultCache.insert(std::pair<std::string, ResultSet*>(doc_word_string, rs));
+		}
+		else {
+			rs = found->second;
+		}
+
+		for (int i = 0; i < TAU; i++)
+			do_union(&matchedHammingWords[i], &rs->results_hamming[i]);
+		for (int i = 0; i < TAU; i++)
+			do_union(&matchedEditWords[i], &rs->results_edit[i]);
+	}
+	// fprintf(stdout, "searching doc %d hamming/edit = %d/%d\n", doc_id, perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
+
+	for (int i = 1; i < TAU; i++)
+		do_union(&matchedHammingWords[i], &matchedHammingWords[i - 1]);
+
+	for (int i = 1; i < TAU; i++)
+		do_union(&matchedEditWords[i], &matchedEditWords[i - 1]);
+
+	for (int i = 0; i < TAU; i++)
+		do_union(&matchedEditWords[i], &matchedHammingWords[i]);
+
+	words_to_queries(matchedHammingWords, matchedEditWords, query_ids);
 
 	// performace: change iterator to const_iterator if possible.
 	std::sort(query_ids.begin(), query_ids.end());
