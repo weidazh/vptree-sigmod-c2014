@@ -287,7 +287,7 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 typedef std::set<int> SET;
 
 static void do_union_x(SET * x, std::vector<std::string> * y) {
-	for(typename std::vector<std::string>::iterator i = y->begin();
+	for(std::vector<std::string>::iterator i = y->begin();
 		i != y->end();
 		i++) {
 		Word* w = I2P(wordMap.find(*i)->second);
@@ -299,7 +299,7 @@ static void do_union_x(SET * x, std::vector<std::string> * y) {
 static int* do_union_y(std::vector<std::string>* y) {
 	int* x = (int*)malloc(y->size() * sizeof(int) + 1);
 	int j = 0;
-	for(typename std::vector<std::string>::iterator i = y->begin();
+	for(std::vector<std::string>::iterator i = y->begin();
 		i != y->end();
 		i++, j++) {
 		Word* w = I2P(wordMap.find(*i)->second);
@@ -317,7 +317,7 @@ static void do_union(SET* x, int** y) {
 }
 
 static void do_union(SET* x, SET* y) {
-	for(typename SET::iterator i = y->begin();
+	for(SET::iterator i = y->begin();
 		i != y->end();
 		i++) {
 
