@@ -16,6 +16,9 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 
 #define TAU 4
 
+/* Iterator to pointer */
+#define I2P(x) (&(*(x)))
+
 static int perf_counter_hamming = 0;
 static int perf_counter_edit = 0;
 // must be int
@@ -115,8 +118,8 @@ public:
 	}
 };
 
-typedef std::map<std::string, Word&> WordMap;
-typedef std::map<int, Word&> WordMapByID;
+typedef std::map<std::string, Word*> WordMap;
+typedef std::map<int, Word*> WordMapByID;
 WordMap wordMap;
 WordMapByID wordMapByID;
 // std::set<std::string> wordSet;
@@ -124,7 +127,7 @@ typedef VpTree<std::string, int, hamming> HammingVpTree;
 typedef VpTree<std::string, int, edit> EditVpTree;
 HammingVpTree* hamming_vptree;
 EditVpTree* edit_vptree;
-typedef std::map<QueryID, Query&> QueryMap;
+typedef std::map<QueryID, Query*> QueryMap;
 QueryMap queryMap;
 
 
@@ -173,12 +176,14 @@ static void new_vptrees_unless_exists() {
 	if (! hamming_vptree) {
 		hamming_vptree = new HammingVpTree();
 		edit_vptree = new EditVpTree();
-		for(std::map<std::string, Word&>::iterator i = wordMap.begin();
+		for(std::map<std::string, Word*>::iterator i = wordMap.begin();
 			i != wordMap.end(); i++) {
 
-			if (i->second.hasHamming())
+			Word* w = I2P(i->second);
+
+			if (w->hasHamming())
 				hammingWordList.push_back(i->first);
-			if (i->second.hasEdit())
+			if (w->hasEdit())
 				editWordList.push_back(i->first);
 		}
 		fprintf(stdout, "searching hamming/edit = %d/%d\n", perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
@@ -211,7 +216,7 @@ static void clear_vptrees() {
 ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType match_type, unsigned int match_dist) {
 	clear_vptrees();
 	Query* q = new Query(query_id, query_str, match_type, match_dist);
-	queryMap.insert(std::pair<QueryID, Query&>(query_id, *q));
+	queryMap.insert(std::pair<QueryID, Query*>(query_id, q));
 	bool first = true;
 	int i = 0;
 	ITERATE_QUERY_WORDS(query_word, query_str) {
@@ -219,14 +224,14 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 		WordMap::iterator found = wordMap.find(query_word_string);
 		Word* word;
 		if (found != wordMap.end()) {
-			word = &(found->second);
+			word = I2P(found->second);
 			word->push_query(query_id, first, match_type);
 		}
 		else {
 			word = new Word(query_word_string);
 			word->push_query(query_id, first, match_type);
-			wordMap.insert(std::pair<std::string, Word&>(query_word_string, *word));
-			wordMapByID.insert(std::pair<int, Word&>(word->id(), *word));
+			wordMap.insert(std::pair<std::string, Word*>(query_word_string, word));
+			wordMapByID.insert(std::pair<int, Word*>(word->id(), word));
 			// wordSet.insert(query_word_string);
 		}
 		if (i >= MAX_QUERY_WORDS)
@@ -249,18 +254,18 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 	if (found == queryMap.end()) {
 		return EC_SUCCESS;
 	}
-	Query& query = found->second;
+	Query* query = I2P(found->second);
 	queryMap.erase(found);
 	bool first = true;
-	ITERATE_QUERY_WORDS(query_word, query.getQueryStr()) {
+	ITERATE_QUERY_WORDS(query_word, query->getQueryStr()) {
 		std::string query_word_string = word_to_string(query_word);
 		WordMap::iterator word_found = wordMap.find(query_word_string);
 		if (word_found == wordMap.end()) {
-			fprintf(stderr, "ERROR: word not found for query(%s) and word(%s)\n", query.getQueryStr(), query_word_string.c_str());
+			fprintf(stderr, "ERROR: word not found for query(%s) and word(%s)\n", query->getQueryStr(), query_word_string.c_str());
 			continue;
 		}
-		Word* word = &(word_found->second);
-		word->remove_query(query_id, query.match_type);
+		Word* word = I2P(word_found->second);
+		word->remove_query(query_id, query->match_type);
 		// BUG: if the same query appears twice in a word?
 		if (first)
 			word->remove_first_word_query(query_id);
@@ -274,7 +279,7 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 		}
 		first = false;
 	}
-	delete &query;
+	delete query;
 
 	return EC_SUCCESS;
 }
@@ -285,8 +290,9 @@ static void do_union_x(SET * x, std::vector<std::string> * y) {
 	for(typename std::vector<std::string>::iterator i = y->begin();
 		i != y->end();
 		i++) {
+		Word* w = I2P(wordMap.find(*i)->second);
 
-		x->insert(wordMap.find(*i)->second.id());
+		x->insert(w->id());
 	}
 }
 
@@ -296,8 +302,9 @@ static int* do_union_y(std::vector<std::string>* y) {
 	for(typename std::vector<std::string>::iterator i = y->begin();
 		i != y->end();
 		i++, j++) {
+		Word* w = I2P(wordMap.find(*i)->second);
 
-		x[j] = wordMap.find(*i)->second.id();
+		x[j] = w->id();
 	}
 	x[j] = -1;
 	return x;
@@ -323,24 +330,24 @@ void words_to_queries(SET* matchedHammingWords, SET* matchedEditWords, std::vect
 		i != matchedEditWords[3].end();
 		i++) {
 
-		Word& word = wordMapByID.find(*i)->second;
-		for(std::set<QueryID>::iterator j = word.begin();
-			j != word.end();
+		Word* word = I2P(wordMapByID.find(*i)->second);
+		for(std::set<QueryID>::iterator j = word->begin();
+			j != word->end();
 			j++) {
 
 			bool match = true;
 
 			QueryID query_id = *j;
-			Query& query = queryMap.find(query_id)->second;
-			for (int j = 0; j < MAX_QUERY_WORDS && query.word_ids[j] != -1; j++) {
-				int id = query.word_ids[j];
+			Query* query = I2P(queryMap.find(query_id)->second);
+			for (int j = 0; j < MAX_QUERY_WORDS && query->word_ids[j] != -1; j++) {
+				int id = query->word_ids[j];
 				// if query is hamming
-				if ((query.match_type == MT_EXACT_MATCH &&
+				if ((query->match_type == MT_EXACT_MATCH &&
 					! matchedHammingWords[0].count(id)) ||
-				    (query.match_type == MT_HAMMING_DIST &&
-					! matchedHammingWords[query.match_dist].count(id)) ||
-				    (query.match_type == MT_EDIT_DIST &&
-					! matchedEditWords[query.match_dist].count(id))) {
+				    (query->match_type == MT_HAMMING_DIST &&
+					! matchedHammingWords[query->match_dist].count(id)) ||
+				    (query->match_type == MT_EDIT_DIST &&
+					! matchedEditWords[query->match_dist].count(id))) {
 
 					match = false;
 					break;
