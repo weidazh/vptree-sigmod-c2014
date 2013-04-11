@@ -141,7 +141,7 @@ HammingVpTree* hamming_vptree;
 EditVpTree* edit_vptree;
 
 typedef std::map<QueryID, Query*> QueryMap;
-pthread_mutex_t queryMapLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_rwlock_t queryMapLock = PTHREAD_RWLOCK_INITIALIZER;
 QueryMap queryMap;
 
 
@@ -239,9 +239,9 @@ static void clear_vptrees() {
 ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType match_type, unsigned int match_dist) {
 	clear_vptrees();
 	Query* q = new Query(query_id, query_str, match_type, match_dist);
-	pthread_mutex_lock(&queryMapLock);
+	pthread_rwlock_wrlock(&queryMapLock);
 	queryMap.insert(std::pair<QueryID, Query*>(query_id, q));
-	pthread_mutex_unlock(&queryMapLock);
+	pthread_rwlock_unlock(&queryMapLock);
 	bool first = true;
 	int i = 0;
 	ITERATE_QUERY_WORDS(query_word, query_str) {
@@ -276,16 +276,16 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 }
 
 ErrorCode VPTreeQueryRemove(QueryID query_id) {
-	pthread_mutex_lock(&queryMapLock);
+	pthread_rwlock_wrlock(&queryMapLock);
 	QueryMap::iterator found = queryMap.find(query_id);
 	clear_vptrees();
 	if (found == queryMap.end()) {
-		pthread_mutex_unlock(&queryMapLock);
+		pthread_rwlock_unlock(&queryMapLock);
 		return EC_SUCCESS;
 	}
 	Query* query = I2P(found->second);
 	queryMap.erase(found);
-	pthread_mutex_unlock(&queryMapLock);
+	pthread_rwlock_unlock(&queryMapLock);
 	bool first = true;
 	ITERATE_QUERY_WORDS(query_word, query->getQueryStr()) {
 		std::string query_word_string = word_to_string(query_word);
@@ -365,9 +365,9 @@ void words_to_queries(SET* matchedHammingWords, SET* matchedEditWords, std::vect
 			bool match = true;
 
 			QueryID query_id = *j;
-			pthread_mutex_lock(&queryMapLock);
+			pthread_rwlock_rdlock(&queryMapLock);
 			Query* query = I2P(queryMap.find(query_id)->second);
-			pthread_mutex_unlock(&queryMapLock);
+			pthread_rwlock_unlock(&queryMapLock);
 			for (int j = 0; j < MAX_QUERY_WORDS && query->word_ids[j] != -1; j++) {
 				int id = query->word_ids[j];
 				// if query is hamming

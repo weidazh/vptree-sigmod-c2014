@@ -31,7 +31,7 @@
 TEST_O=test_driver/test.o 
 IMPL_O=ref_impl/core.o ref_impl/vptree_match.o
 
-GPROF := y
+GPROF := n
 
 CFLAGS-y :=
 CFLAGS-$(GPROF) += -pg

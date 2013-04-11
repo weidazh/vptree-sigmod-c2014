@@ -35,7 +35,7 @@
 #include <pthread.h>
 using namespace std;
 
-#define THREAD_N 2
+#define THREAD_N 4
 #define INVALID_DOC_ID 0
 #define thread_fprintf(...)
 // #define thread_fprintf fprintf
