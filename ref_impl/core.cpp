@@ -32,8 +32,12 @@
 #include <cstdio>
 #include <vector>
 #include <ctime>
+#include <pthread.h>
 using namespace std;
 
+#define THREAD_N 1
+#define INVALID_DOC_ID 0
+#define thread_fprintf(...)
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 // Computes edit distance between a null-terminated string "a" with length "na"
@@ -139,11 +143,40 @@ vector<Query> queries;
 #endif
 
 // Keeps all currently available results that has not been returned yet
+pthread_mutex_t docs_lock = PTHREAD_MUTEX_INITIALIZER;
 vector<DocumentResults*> docs;
+
+struct RequestResponse {
+	int tid;
+	int finishing;
+	DocID doc_id;
+	char* doc_str; /* malloc in master thread, free after the worker received */
+	DocumentResults* doc_result; /* malloc in master thread, moved to `docs' by master thread */
+	pthread_mutex_t lock;
+	pthread_cond_t cond;
+};
+
+struct ThreadsPool {
+	int n;
+	int in_flight;
+	pthread_t pt[THREAD_N];
+	struct RequestResponse rr[THREAD_N];
+
+	pthread_mutex_t lock;
+	pthread_cond_t cond;
+	int available[THREAD_N];
+};
+
+struct ThreadsPool threadsPool;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
+int CreateThread();
 ErrorCode InitializeIndex(){
+	threadsPool.n = 0;
+	pthread_mutex_init(&threadsPool.lock, NULL);
+	pthread_cond_init(&threadsPool.cond, NULL);
+	while ( CreateThread() != -1);
 	srand(time(NULL));
 	return EC_SUCCESS;
 }
@@ -165,6 +198,10 @@ ErrorCode StartQuery(QueryID query_id, const char* query_str, MatchType match_ty
 	// Add this query to the active query set
 	queries.push_back(query);
 #endif
+	if (threadsPool.in_flight > 0) {
+		fprintf(stderr, "threadsPool.in_flight > 0\n");
+		exit(1);
+	}
 
 	VPTreeQueryAdd(query_id, query_str, match_type, match_dist);
 	return EC_SUCCESS;
@@ -186,32 +223,163 @@ ErrorCode EndQuery(QueryID query_id)
 		}
 	}
 #endif
+	if (threadsPool.in_flight > 0) {
+		fprintf(stderr, "threadsPool.in_flight > 0\n");
+		exit(1);
+	}
 	VPTreeQueryRemove(query_id);
 	return EC_SUCCESS;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
-ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
+void* MTWorker(void* arg) {
+	int doc_id;
+	char* doc_str;
+	DocID last_doc_id = INVALID_DOC_ID;
+	struct RequestResponse* rr = (struct RequestResponse*)arg;
+	int tid = rr->tid;
+	thread_fprintf(stderr, "MTWorker[%d] starting\n", tid);
+	pthread_mutex_lock(&threadsPool.lock);
+	threadsPool.available[tid] = 1;
+	pthread_cond_signal(&threadsPool.cond);
+	pthread_mutex_unlock(&threadsPool.lock);
+	pthread_mutex_lock(&rr->lock);
+	while (1) {
+		thread_fprintf(stderr, "MTWorker[%d] waiting\n", tid);
+		pthread_cond_wait(&rr->cond, &rr->lock);
+		if (rr->finishing)
+			break;
+
+		if (rr->doc_id == last_doc_id) {
+			thread_fprintf(stderr, "MTWorker[%d] found old doc_id\n", tid);
+			continue;
+		}
+		rr->doc_result = NULL;
+		doc_id = rr->doc_id;
+		doc_str = rr->doc_str;
+		pthread_mutex_unlock(&rr->lock);
+
+		thread_fprintf(stderr, "MTWorker[%d] found doc_id %d\n", tid, doc_id);
+
+		vector<unsigned int> query_ids;
+
+		VPTreeMatchDocument(doc_id, doc_str, query_ids);
+		DocumentResults* doc = new DocumentResults(doc_id, query_ids);
+
+		thread_fprintf(stderr, "MTWorker[%d] signaling rr results\n", tid);
+		pthread_mutex_lock(&rr->lock);
+		rr->doc_result = doc;
+
+		thread_fprintf(stderr, "MTWorker[%d] signaling availability \n", tid);
+		pthread_mutex_lock(&threadsPool.lock);
+		threadsPool.available[tid] = 1;
+		pthread_cond_signal(&threadsPool.cond);
+		pthread_mutex_unlock(&threadsPool.lock);
+	}
+	pthread_mutex_unlock(&rr->lock);
+	return 0;
+}
+
+/* Only the master thread (the testdrver's thread) can call CreateThread,
+ * so I do not lock the threadsPool's data structure.
+ * If such behavior is changed, lock me! */
+// return 1 if OK
+int CreateThread() {
+	int ret_val;
+	int n = threadsPool.n;
+
+	if (n >= THREAD_N)
+		return -1;
+
+	pthread_mutex_init(&threadsPool.rr[n].lock, NULL);
+	pthread_cond_init(&threadsPool.rr[n].cond, NULL);
+	threadsPool.rr[n].tid = n;
+
+	ret_val = pthread_create(&threadsPool.pt[n], NULL, MTWorker, &threadsPool.rr[n]);
+	if (ret_val != 0) {
+		perror("Pthread create error \n");
+		exit(1);
+	}
+	threadsPool.n ++;
+	return n;
+}
+
+int FindThread(int reset_available) {
+	int i;
+	thread_fprintf(stderr, "MasterThread: searching workers\n");
+	pthread_mutex_lock(&threadsPool.lock);
+	while (1) {
+		for (i = 0; i < threadsPool.n; i++) {
+			if (threadsPool.available[i]) {
+				thread_fprintf(stderr, "MasterThread: worker %d available\n", i);
+				if (reset_available)
+					threadsPool.available[i] = 0;
+				pthread_mutex_unlock(&threadsPool.lock);
+				return i;
+			}
+		}
+		thread_fprintf(stderr, "MasterThread: no workers, waiting for them\n");
+		pthread_cond_wait(&threadsPool.cond, &threadsPool.lock);
+	}
+}
+
+// when return holding the lock
+int FindThreadAndMoveBack(int reset_available) {
+	int n;
+	n = FindThread(reset_available);
+
+	thread_fprintf(stderr, "MasterThread: now found %d\n", n);
+	pthread_mutex_lock(&threadsPool.rr[n].lock);
+
+	if (threadsPool.rr[n].doc_result) {
+		docs.push_back(threadsPool.rr[n].doc_result);
+		threadsPool.rr[n].doc_result = NULL;
+		free(threadsPool.rr[n].doc_str);
+	}
+	return n;
+}
+
+ErrorCode MTVPTreeMatchDocument(DocID doc_id, const char* doc_str)
 {
-	char cur_doc_str[MAX_DOC_LENGTH];
+	char* cur_doc_str;
+	int n;
+	cur_doc_str = (char*) malloc(strlen(doc_str) + 1);
 	strcpy(cur_doc_str, doc_str);
 
-	vector<unsigned int> query_ids;
+	thread_fprintf(stderr, "MasterThread: doc %d comes\n", doc_id);
+	n = FindThreadAndMoveBack(1);
+	threadsPool.rr[n].doc_id = doc_id;
+	threadsPool.rr[n].doc_str = cur_doc_str;
 
-	VPTreeMatchDocument(doc_id, cur_doc_str, query_ids);
+	pthread_cond_signal(&threadsPool.rr[n].cond);
+	pthread_mutex_unlock(&threadsPool.rr[n].lock);
+	thread_fprintf(stderr, "MasterThread: signal sent to MTWorker[%d]\n", n);
 
-	DocumentResults* doc = new DocumentResults(doc_id, query_ids);
-	docs.push_back(doc);
+	threadsPool.in_flight += 1;
 
 	return EC_SUCCESS;
+}
+
+ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
+{
+	if (doc_id == INVALID_DOC_ID) {
+		perror("input doc_id == INVALID_DOC_ID, maybe you should use 0xFFFFFFFF as INVALID_DOC_ID instead?");
+		exit(1);
+	}
+	return MTVPTreeMatchDocument(doc_id, doc_str);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_query_ids)
 {
+	int n;
 	// Get the first undeliverd resuilt from "docs" and return it
+	if (docs.size() == 0) {
+		n = FindThreadAndMoveBack(0);
+		pthread_mutex_unlock(&threadsPool.rr[n].lock);
+	}
 	if (docs.size() == 0) {
 		*p_doc_id = 0;
 		*p_num_res = 0;
@@ -221,6 +389,8 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 	else {
 		DocumentResults* doc = docs[0];
 		docs.erase(docs.begin());
+		thread_fprintf(stderr, "doc_id result %d\n", doc->doc_id);
+		threadsPool.in_flight -= 1;
 		*p_doc_id = doc->doc_id;
 		*p_num_res = doc->num_res;
 		*p_query_ids = doc->query_ids;
