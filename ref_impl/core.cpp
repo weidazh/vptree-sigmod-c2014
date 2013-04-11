@@ -52,7 +52,7 @@ static inline int min2(int v, int b) {
 #define likely(x) __builtin_expect((x),1)
 #define unlikely(x) __builtin_expect((x),0)
 static inline int EditDistanceCore(const char* a, int na, const char* b, int nb) {
-	static int T[2][MAX_WORD_LENGTH]; // gprof: static or not, no difference
+	int T[2][MAX_WORD_LENGTH]; // gprof: static or not, no difference
 	int cur = 0;
 	int best;
 	// loop unrolling

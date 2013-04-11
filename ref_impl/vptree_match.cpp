@@ -406,18 +406,23 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			pthread_mutex_unlock(&resultCacheLock);
 			rs = new ResultSet();
 			std::vector<std::string> results[TAU];
-			pthread_rwlock_wrlock(&vpTreeLock);
+
+			pthread_rwlock_rdlock(&vpTreeLock);
 			hamming_vptree->search(doc_word_string, TAU, results);
 			pthread_rwlock_unlock(&vpTreeLock);
+
 			for (int i = 0; i< TAU; i++) {
 				rs->results_hamming[i] = do_union_y(&results[i]);
 				results[i].clear();
 			}
-			pthread_rwlock_wrlock(&vpTreeLock);
+
+			pthread_rwlock_rdlock(&vpTreeLock);
 			edit_vptree->search(doc_word_string, TAU, results);
 			pthread_rwlock_unlock(&vpTreeLock);
+
 			for (int i = 0; i< TAU; i++)
 				rs->results_edit[i] = do_union_y(&results[i]);
+
 			pthread_mutex_lock(&resultCacheLock);
 			resultCache.insert(std::pair<std::string, ResultSet*>(doc_word_string, rs));
 			pthread_mutex_unlock(&resultCacheLock);
