@@ -41,7 +41,7 @@ CC  = gcc
 CXX = g++
 CFLAGS=-O3 -fPIC -Wall -g -I. -I./include $(CFLAGS-y)
 CXXFLAGS=$(CFLAGS)
-LDFLAGS=-lpthread
+LDFLAGS=-pthread
 
 # The programs that will be built
 PROGRAMS=testdriver teststatic
@@ -53,13 +53,13 @@ LIBRARY=core
 all: $(PROGRAMS)
 
 lib: $(IMPL_O)
-	$(CXX) $(CXXFLAGS) -shared -o lib$(LIBRARY).so $(IMPL_O)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -shared -o lib$(LIBRARY).so $(IMPL_O)
 
 testdriver: lib $(TEST_O)
-	$(CXX) $(CXXFLAGS) -o $@ $(TEST_O) ./lib$(LIBRARY).so
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $(TEST_O) ./lib$(LIBRARY).so
 
 teststatic: $(IMPL_O) $(TEST_O)
-	$(CXX) $(CXXFLAGS) -o $@ $(TEST_O) $(IMPL_O)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $(TEST_O) $(IMPL_O)
 
 clean:
 	rm -f $(PROGRAMS) lib$(LIBRARY).so
