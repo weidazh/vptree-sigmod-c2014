@@ -65,6 +65,7 @@ public:
 	}
 };
 
+pthread_mutex_t max_word_id_lock = PTHREAD_MUTEX_INITIALIZER;
 static int max_word_id = 0;
 
 class Word {
@@ -78,8 +79,10 @@ public:
 	Word(std::string word)
 		: word(word), hamming_queries(0), edit_queries(0), first_word_queries() {
 
+		pthread_mutex_lock(&max_word_id_lock);
 		word_id = max_word_id;
 		max_word_id += 1;
+		pthread_mutex_unlock(&max_word_id_lock);
 	}
 	void push_query(QueryID q, bool first, MatchType match_type) {
 		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
@@ -126,7 +129,7 @@ WordMapByID wordMapByID;
 // std::set<std::string> wordSet;
 typedef VpTree<std::string, int, hamming> HammingVpTree;
 typedef VpTree<std::string, int, edit> EditVpTree;
-pthread_mutex_t vpTreeLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_rwlock_t vpTreeLock = PTHREAD_RWLOCK_INITIALIZER;
 HammingVpTree* hamming_vptree;
 EditVpTree* edit_vptree;
 
@@ -178,7 +181,7 @@ int old_perf_edit;
 static void new_vptrees_unless_exists() {
 	std::vector<std::string> hammingWordList;
 	std::vector<std::string> editWordList;
-	pthread_mutex_lock(&vpTreeLock);
+	pthread_rwlock_wrlock(&vpTreeLock);
 	if (! hamming_vptree) {
 		hamming_vptree = new HammingVpTree();
 		edit_vptree = new EditVpTree();
@@ -212,18 +215,18 @@ static void new_vptrees_unless_exists() {
 		resultCache.clear();
 		pthread_mutex_unlock(&resultCacheLock);
 	}
-	pthread_mutex_unlock(&vpTreeLock);
+	pthread_rwlock_unlock(&vpTreeLock);
 }
 
 static void clear_vptrees() {
-	pthread_mutex_lock(&vpTreeLock);
+	pthread_rwlock_wrlock(&vpTreeLock);
 	if (hamming_vptree) {
 		delete hamming_vptree;
 		delete edit_vptree;
 		hamming_vptree = NULL;
 		edit_vptree = NULL;
 	}
-	pthread_mutex_unlock(&vpTreeLock);
+	pthread_rwlock_unlock(&vpTreeLock);
 }
 
 ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType match_type, unsigned int match_dist) {
@@ -403,16 +406,16 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			pthread_mutex_unlock(&resultCacheLock);
 			rs = new ResultSet();
 			std::vector<std::string> results[TAU];
-			pthread_mutex_lock(&vpTreeLock);
+			pthread_rwlock_wrlock(&vpTreeLock);
 			hamming_vptree->search(doc_word_string, TAU, results);
-			pthread_mutex_unlock(&vpTreeLock);
+			pthread_rwlock_unlock(&vpTreeLock);
 			for (int i = 0; i< TAU; i++) {
 				rs->results_hamming[i] = do_union_y(&results[i]);
 				results[i].clear();
 			}
-			pthread_mutex_lock(&vpTreeLock);
+			pthread_rwlock_wrlock(&vpTreeLock);
 			edit_vptree->search(doc_word_string, TAU, results);
-			pthread_mutex_unlock(&vpTreeLock);
+			pthread_rwlock_unlock(&vpTreeLock);
 			for (int i = 0; i< TAU; i++)
 				rs->results_edit[i] = do_union_y(&results[i]);
 			pthread_mutex_lock(&resultCacheLock);

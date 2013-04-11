@@ -16,7 +16,6 @@ public:
     VpTree() : _root(0) {}
 
     ~VpTree() {
-        // fprintf(stderr, "%d / %d = %.3f, %d\n", perf_nodes_visited, perf_num_searched, (double) perf_nodes_visited / perf_num_searched, _items.size());
         delete _root;
     }
 
@@ -24,21 +23,15 @@ public:
         delete _root;
         _items = items;
         _root = buildFromPoints(0, items.size());
-
-        perf_nodes_visited = 0;
-        perf_num_searched = 0;
     }
 
     // now S must be int, not event unsigned int!
     void search( const T& target, S tau,
-        std::vector<T>* results)
+        std::vector<T>* results) const
     {
         std::priority_queue<HeapItem> heap[tau];
 
-        _tau = tau; // std::numeric_limits<S>::max();
-        int visited = search(_root, target, heap);
-        perf_nodes_visited += visited;
-        perf_num_searched += 1;
+        search(_root, target, heap, tau);
 
         for (S i = 0; i < tau; i++) {
             while( !heap[i].empty() ) {
@@ -49,10 +42,7 @@ public:
     }
 
 private:
-    int perf_nodes_visited;
-    int perf_num_searched;
     std::vector<T> _items;
-    S _tau;
 
     struct Node
     {
@@ -126,7 +116,7 @@ private:
 
     // return number of nodes visited
     int search( Node* node, const T& target,
-                 std::priority_queue<HeapItem>* heap )
+                 std::priority_queue<HeapItem>* heap, int _tau) const
     {
         int visited = 0;
         if ( node == NULL ) return 0;
@@ -146,20 +136,20 @@ private:
 
         if ( dist < node->threshold ) {
             if ( dist - _tau < node->threshold ) {
-                visited += search( node->left, target, heap );
+                visited += search( node->left, target, heap, _tau);
             }
 
             if ( dist + _tau > node->threshold ) {
-                visited += search( node->right, target, heap );
+                visited += search( node->right, target, heap, _tau);
             }
 
         } else {
             if ( dist + _tau > node->threshold ) {
-                visited += search( node->right, target, heap );
+                visited += search( node->right, target, heap, _tau);
             }
 
             if ( dist - _tau < node->threshold ) {
-                visited += search( node->left, target, heap );
+                visited += search( node->left, target, heap, _tau);
             }
         }
         return visited;
