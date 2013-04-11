@@ -39,6 +39,21 @@ using namespace std;
 #define INVALID_DOC_ID 0
 #define thread_fprintf(...)
 // #define thread_fprintf fprintf
+////////////////
+#include <sys/time.h>
+static long long GetClockTimeInUS()
+{
+	struct timeval t2;
+	gettimeofday(&t2,NULL);
+	return t2.tv_sec*1000000LL+t2.tv_usec;
+}
+struct stats {
+	long long total_wait;
+	long long start_serial;
+	long long total_serial;
+	long long start_parallel;
+	long long total_parallel;
+} stats;
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 // Computes edit distance between a null-terminated string "a" with length "na"
@@ -174,18 +189,28 @@ struct ThreadsPool threadsPool;
 
 int CreateThread();
 void KillThreads();
+
 ErrorCode InitializeIndex(){
 	threadsPool.n = 0;
 	pthread_mutex_init(&threadsPool.lock, NULL);
 	pthread_cond_init(&threadsPool.cond, NULL);
 	while ( CreateThread() != -1);
 	srand(time(NULL));
+
+	stats.total_wait = 0;
+	stats.start_serial = GetClockTimeInUS();
+	stats.total_serial = 0;
+	stats.start_parallel = GetClockTimeInUS();
+	stats.total_parallel = 0;
 	return EC_SUCCESS;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 ErrorCode DestroyIndex(){
+	fprintf(stderr, "stats.total_wait = %lld.%06lld\n", stats.total_wait / 1000000LL, stats.total_wait % 1000000LL);
+	fprintf(stderr, "stats.total_serial = %lld.%06lld\n", stats.total_serial / 1000000LL, stats.total_serial % 1000000LL);
+	fprintf(stderr, "stats.total_parallel = %lld.%06lld\n", stats.total_parallel / 1000000LL, stats.total_parallel % 1000000LL);
 	KillThreads();
 	return EC_SUCCESS;
 }
@@ -389,6 +414,10 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 		perror("input doc_id == INVALID_DOC_ID, maybe you should use 0xFFFFFFFF as INVALID_DOC_ID instead?");
 		exit(1);
 	}
+	if (threadsPool.in_flight == 0) {
+		stats.total_serial += GetClockTimeInUS() - stats.start_serial;
+		stats.start_parallel = GetClockTimeInUS();
+	}
 	return MTVPTreeMatchDocument(doc_id, doc_str);
 }
 
@@ -401,6 +430,7 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 	int Q[THREAD_N];
 	// Get the first undeliverd resuilt from "docs" and return it
 	if (docs.size() == 0 && threadsPool.in_flight) {
+		long long start = GetClockTimeInUS()
 		thread_fprintf(stderr, "threadsPool.in_flight = %d\n", threadsPool.in_flight);
 		n = 0;
 		for (i = 0; i < threadsPool.in_flight; i++) {
@@ -413,6 +443,9 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 			threadsPool.available[Q[i]] = 1;
 		}
 		pthread_mutex_unlock(&threadsPool.lock);
+		long long end = GetClockTimeInUS();
+		stats.total_wait += (end - start);
+		stats.total_parallel += GetClockTimeInUS() - stats.start_parallel;
 	}
 	if (docs.size() == 0) {
 		*p_doc_id = 0;
@@ -429,6 +462,8 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 		*p_num_res = doc->num_res;
 		*p_query_ids = doc->query_ids;
 		delete doc;
+		if (threadsPool.in_flight == 0)
+			stats.start_serial = GetClockTimeInUS();
 		return EC_SUCCESS;
 	}
 }
