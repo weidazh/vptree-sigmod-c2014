@@ -3,4 +3,7 @@ ref_impl/core.o
 ref_impl/vptree_match.o
 test_driver/test.o
 testdriver
+teststatic
+test_data/big_test.txt
+test_data/inter_test.txt
 
