@@ -68,6 +68,7 @@ public:
 pthread_mutex_t max_word_id_lock = PTHREAD_MUTEX_INITIALIZER;
 static int max_word_id = 0;
 
+pthread_rwlock_t wordLock = PTHREAD_RWLOCK_INITIALIZER;
 class Word {
 	std::string word;
 	int hamming_queries;
@@ -85,21 +86,27 @@ public:
 		pthread_mutex_unlock(&max_word_id_lock);
 	}
 	void push_query(QueryID q, bool first, MatchType match_type) {
+		pthread_rwlock_wrlock(&wordLock);
 		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
 			this->hamming_queries += 1;
 		if (match_type == MT_EDIT_DIST)
 			this->edit_queries += 1;
 		if (first)
 			this->first_word_queries.insert(q);
+		pthread_rwlock_unlock(&wordLock);
 	}
 	void remove_query(QueryID q, MatchType match_type) {
+		pthread_rwlock_wrlock(&wordLock);
 		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
 			this->hamming_queries -= 1;
 		if (match_type == MT_EDIT_DIST)
 			this->edit_queries -= 1;
+		pthread_rwlock_unlock(&wordLock);
 	}
 	void remove_first_word_query(QueryID q) {
+		pthread_rwlock_wrlock(&wordLock);
 		this->first_word_queries.erase(q);
+		pthread_rwlock_unlock(&wordLock);
 	}
 	std::set<QueryID>::iterator begin() const{
 		return first_word_queries.begin();
@@ -123,7 +130,7 @@ public:
 
 typedef std::map<std::string, Word*> WordMap;
 typedef std::map<int, Word*> WordMapByID;
-pthread_mutex_t wordMapLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_rwlock_t wordMapLock = PTHREAD_RWLOCK_INITIALIZER;
 WordMap wordMap;
 WordMapByID wordMapByID;
 // std::set<std::string> wordSet;
@@ -185,7 +192,7 @@ static void new_vptrees_unless_exists() {
 	if (! hamming_vptree) {
 		hamming_vptree = new HammingVpTree();
 		edit_vptree = new EditVpTree();
-		pthread_mutex_lock(&wordMapLock);
+		pthread_rwlock_rdlock(&wordMapLock);
 		for(std::map<std::string, Word*>::iterator i = wordMap.begin();
 			i != wordMap.end(); i++) {
 
@@ -196,7 +203,7 @@ static void new_vptrees_unless_exists() {
 			if (w->hasEdit())
 				editWordList.push_back(i->first);
 		}
-		pthread_mutex_unlock(&wordMapLock);
+		pthread_rwlock_unlock(&wordMapLock);
 		fprintf(stdout, "searching hamming/edit = %d/%d\n", perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
 		old_perf_hamming = perf_counter_hamming;
 		old_perf_edit = perf_counter_edit;
@@ -239,7 +246,7 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 	int i = 0;
 	ITERATE_QUERY_WORDS(query_word, query_str) {
 		std::string query_word_string = word_to_string(query_word);
-		pthread_mutex_lock(&wordMapLock);
+		pthread_rwlock_wrlock(&wordMapLock);
 		WordMap::iterator found = wordMap.find(query_word_string);
 		Word* word;
 		if (found != wordMap.end()) {
@@ -253,7 +260,7 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 			wordMapByID.insert(std::pair<int, Word*>(word->id(), word));
 			// wordSet.insert(query_word_string);
 		}
-		pthread_mutex_unlock(&wordMapLock);
+		pthread_rwlock_unlock(&wordMapLock);
 		if (i >= MAX_QUERY_WORDS)
 		{
 			fprintf(stderr, "ERROR! exceed MAX_QUERY_WORDS\n");
@@ -282,11 +289,11 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 	bool first = true;
 	ITERATE_QUERY_WORDS(query_word, query->getQueryStr()) {
 		std::string query_word_string = word_to_string(query_word);
-		pthread_mutex_lock(&wordMapLock);
+		pthread_rwlock_wrlock(&wordMapLock);
 		WordMap::iterator word_found = wordMap.find(query_word_string);
 		if (word_found == wordMap.end()) {
 			fprintf(stderr, "ERROR: word not found for query(%s) and word(%s)\n", query->getQueryStr(), query_word_string.c_str());
-			pthread_mutex_unlock(&wordMapLock);
+			pthread_rwlock_unlock(&wordMapLock);
 			continue;
 		}
 		Word* word = I2P(word_found->second);
@@ -302,7 +309,7 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 
 			delete word;
 		}
-		pthread_mutex_unlock(&wordMapLock);
+		pthread_rwlock_unlock(&wordMapLock);
 		first = false;
 	}
 	delete query;
@@ -315,7 +322,7 @@ typedef std::set<int> SET;
 static int* do_union_y(std::vector<std::string>* y) {
 	int* x = (int*)malloc(y->size() * sizeof(int) + 1);
 	int j = 0;
-	pthread_mutex_lock(&wordMapLock);
+	pthread_rwlock_rdlock(&wordMapLock);
 	for(std::vector<std::string>::iterator i = y->begin();
 		i != y->end();
 		i++, j++) {
@@ -323,7 +330,7 @@ static int* do_union_y(std::vector<std::string>* y) {
 
 		x[j] = w->id();
 	}
-	pthread_mutex_unlock(&wordMapLock);
+	pthread_rwlock_unlock(&wordMapLock);
 	x[j] = -1;
 	return x;
 }
@@ -348,9 +355,9 @@ void words_to_queries(SET* matchedHammingWords, SET* matchedEditWords, std::vect
 		i != matchedEditWords[3].end();
 		i++) {
 
-		pthread_mutex_lock(&wordMapLock);
+		pthread_rwlock_rdlock(&wordMapLock);
 		Word* word = I2P(wordMapByID.find(*i)->second);
-		pthread_mutex_unlock(&wordMapLock);
+		pthread_rwlock_unlock(&wordMapLock);
 		for(std::set<QueryID>::iterator j = word->begin();
 			j != word->end();
 			j++) {
