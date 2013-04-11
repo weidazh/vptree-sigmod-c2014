@@ -35,9 +35,10 @@
 #include <pthread.h>
 using namespace std;
 
-#define THREAD_N 1
+#define THREAD_N 2
 #define INVALID_DOC_ID 0
 #define thread_fprintf(...)
+// #define thread_fprintf fprintf
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 // Computes edit distance between a null-terminated string "a" with length "na"
@@ -172,6 +173,7 @@ struct ThreadsPool threadsPool;
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 int CreateThread();
+void KillThreads();
 ErrorCode InitializeIndex(){
 	threadsPool.n = 0;
 	pthread_mutex_init(&threadsPool.lock, NULL);
@@ -183,7 +185,10 @@ ErrorCode InitializeIndex(){
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
-ErrorCode DestroyIndex(){return EC_SUCCESS;}
+ErrorCode DestroyIndex(){
+	KillThreads();
+	return EC_SUCCESS;
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -278,6 +283,7 @@ void* MTWorker(void* arg) {
 		pthread_mutex_unlock(&threadsPool.lock);
 	}
 	pthread_mutex_unlock(&rr->lock);
+	pthread_exit(NULL);
 	return 0;
 }
 
@@ -340,6 +346,22 @@ int FindThreadAndMoveBack(int reset_available) {
 	return n;
 }
 
+void KillThreads() {
+	int i;
+	int n;
+	void* ret_val;
+
+	for(i = 0; i < THREAD_N; i++) {
+		n = FindThreadAndMoveBack(1);
+		threadsPool.rr[n].finishing = 1;
+		pthread_cond_signal(&threadsPool.rr[n].cond);
+		pthread_mutex_unlock(&threadsPool.rr[n].lock);
+	}
+	for(i = 0; i < THREAD_N; i++) {
+		pthread_join(threadsPool.pt[i], &ret_val);
+	}
+}
+
 ErrorCode MTVPTreeMatchDocument(DocID doc_id, const char* doc_str)
 {
 	char* cur_doc_str;
@@ -375,10 +397,22 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_query_ids)
 {
 	int n;
+	int i;
+	int Q[THREAD_N];
 	// Get the first undeliverd resuilt from "docs" and return it
-	if (docs.size() == 0) {
-		n = FindThreadAndMoveBack(0);
-		pthread_mutex_unlock(&threadsPool.rr[n].lock);
+	if (docs.size() == 0 && threadsPool.in_flight) {
+		thread_fprintf(stderr, "threadsPool.in_flight = %d\n", threadsPool.in_flight);
+		n = 0;
+		for (i = 0; i < threadsPool.in_flight; i++) {
+			Q[i] = FindThreadAndMoveBack(1);
+			n += 1;
+			pthread_mutex_unlock(&threadsPool.rr[Q[i]].lock);
+		}
+		pthread_mutex_lock(&threadsPool.lock);
+		for (i = 0; i < n; i++) {
+			threadsPool.available[Q[i]] = 1;
+		}
+		pthread_mutex_unlock(&threadsPool.lock);
 	}
 	if (docs.size() == 0) {
 		*p_doc_id = 0;
