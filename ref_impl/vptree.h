@@ -52,7 +52,7 @@ private:
         Node* right;
 
         Node() :
-            index(0), threshold(0.), left(0), right(0) {}
+            index(0), threshold(0), left(0), right(0) {}
 
         ~Node() {
             delete left;

@@ -499,8 +499,8 @@ struct WordResponseRing {
 	pthread_mutex_t lock;
 
 	WordResponseRing(int doc_worker_id):
-		head(0), tail(0),
-		doc_worker_id(doc_worker_id)
+		doc_worker_id(doc_worker_id),
+		head(0), tail(0)
 	{
 		pthread_cond_init(&this->new_resp, NULL);
 		pthread_cond_init(&this->resp_got, NULL);
@@ -610,7 +610,8 @@ void* WordSearcher(void* arg) {
 	global_perf_conter_hamming += perf_counter_hamming;
 	global_perf_conter_edit += perf_counter_edit;
 	pthread_mutex_unlock(&global_counter_lock);
-	
+	pthread_exit(NULL);
+	return NULL;
 }
 // Send request and possible return response.
 struct WordRequestResponse* WaitSearchWordResponse(struct WordRequestResponseRing* ring) {
@@ -692,10 +693,6 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 	SET matchedEditWords[TAU];
 	std::set<std::string> docWords;
 	int in_flight = 0;
-
-	// int old_perf_hamming = perf_counter_hamming;
-	// int old_perf_edit = perf_counter_edit;
-	const char* doc_word = doc_str;
 
 	for (const char* doc_word = doc_str; *doc_word || in_flight;
 			doc_word = next_word_in_query(doc_word)) {
