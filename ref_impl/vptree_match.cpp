@@ -362,7 +362,7 @@ typedef std::set<int> SET;
 static int* do_union_y(std::vector<std::string>* y) {
 	int* x = (int*)malloc(y->size() * sizeof(int) + 1);
 	int j = 0;
-	pthread_rwlock_rdlock(&wordMapLock);
+	// pthread_rwlock_rdlock(&wordMapLock);
 	for(std::vector<std::string>::iterator i = y->begin();
 		i != y->end();
 		i++, j++) {
@@ -370,7 +370,7 @@ static int* do_union_y(std::vector<std::string>* y) {
 
 		x[j] = w->id();
 	}
-	pthread_rwlock_unlock(&wordMapLock);
+	// pthread_rwlock_unlock(&wordMapLock);
 	x[j] = -1;
 	return x;
 }
