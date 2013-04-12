@@ -529,7 +529,7 @@ struct WordRequestRing {
 		pthread_mutex_init(&this->lock, NULL);
 	}
 };
-#define REQ_RING_N 2
+#define REQ_RING_N 12
 struct WordRequestResponseRing {
 	WordRequestRing* reqring[REQ_RING_N];
 	WordResponseRing* respring[WORD_SEARCHER_N];
