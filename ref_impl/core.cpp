@@ -220,8 +220,6 @@ ErrorCode DestroyIndex(){
 	if (threadsPool.n != 1) {
 		double parallel = stats.total_parallel
 				+ stats.total_indexing_and_query_adding;
-		// double parallel_ut = stats.total_parallel_user_time
-		//                    + stats.total_indexing_and_query_adding;
 		double parallel_ut = 32.3717e6; // ENABLE_RESULT_CACHE
 		// double parallel_ut = 54.3972e6; // ! ENABLE_RESULT_CACHE
 		double P_estimated = (parallel / parallel_ut - 1.0) / (1.0 / threadsPool.n - 1.0);

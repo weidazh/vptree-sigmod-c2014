@@ -439,7 +439,6 @@ ResultSet* findCachedResult(std::string doc_word_string) {
 
 ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids)
 {
-	long long start = GetClockTimeInUS();
 	new_vptrees_unless_exists();
 	SET matchedHammingWords[TAU];
 	SET matchedEditWords[TAU];
@@ -511,12 +510,6 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 
 	// performace: change iterator to const_iterator if possible.
 	std::sort(query_ids.begin(), query_ids.end());
-
-	long long end = GetClockTimeInUS();
-	static pthread_mutex_t total_parallel_user_time_lock = PTHREAD_MUTEX_INITIALIZER;
-	pthread_mutex_lock(&total_parallel_user_time_lock);
-	stats.total_parallel_user_time += end - start;
-	pthread_mutex_unlock(&total_parallel_user_time_lock);
 
 	return EC_SUCCESS;
 }
