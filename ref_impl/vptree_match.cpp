@@ -23,6 +23,8 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 #define ENABLE_RESULT_CACHE 0
 #define ENABLE_GLOBAL_RESULT_CACHE 0
 
+#define ENABLE_MULTI_EDITVPTREE 0
+
 // static int perf_counter_hamming = 0;
 // static int perf_counter_edit = 0;
 // must be int
@@ -143,7 +145,7 @@ typedef VpTree<std::string, int, hamming> HammingVpTree;
 typedef VpTree<std::string, int, edit> EditVpTree;
 pthread_rwlock_t vpTreeLock = PTHREAD_RWLOCK_INITIALIZER;
 HammingVpTree* hamming_vptree;
-EditVpTree* edit_vptree;
+EditVpTree* edit_vptree[MAX_WORD_LENGTH];
 
 typedef std::map<QueryID, Query*> QueryMap;
 pthread_rwlock_t queryMapLock = PTHREAD_RWLOCK_INITIALIZER;
@@ -210,7 +212,9 @@ static void new_vptrees_unless_exists() {
 		}
 		long long start = GetClockTimeInUS();
 		hamming_vptree = new HammingVpTree();
-		edit_vptree = new EditVpTree();
+		for (int i = 0; i < MAX_WORD_LENGTH; i++) {
+			edit_vptree[i] = new EditVpTree();
+		}
 		pthread_rwlock_rdlock(&wordMapLock);
 		for(std::map<std::string, Word*>::iterator i = wordMap.begin();
 			i != wordMap.end(); i++) {
@@ -227,7 +231,20 @@ static void new_vptrees_unless_exists() {
 		// old_perf_hamming = perf_counter_hamming;
 		// old_perf_edit = perf_counter_edit;
 		hamming_vptree->create(hammingWordList);
-		edit_vptree->create(editWordList);
+#if ENABLE_MULTI_EDITVPTREE
+		for (int i = 1; i < MAX_WORD_LENGTH; i++) {
+			std::vector<std::string> editWordList2;
+			for (std::vector<std::string>::iterator j = editWordList.begin();
+				j != editWordList.end(); j++) {
+				int len = j->length();
+				if (i - TAU < len && len < i + TAU)
+					editWordList2.push_back(*j);
+			}
+			edit_vptree[i]->create(editWordList2);
+		}
+#else
+		edit_vptree[0]->create(editWordList);
+#endif
 		// fprintf(stdout, "indexing hamming/edit = %d/%d\n", perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
 		// old_perf_hamming = perf_counter_hamming;
 		// old_perf_edit = perf_counter_edit;
@@ -269,9 +286,11 @@ static void clear_vptrees() {
 		stats.total_parallel += GetClockTimeInUS() - stats.start_parallel;
 		stats.start_indexing_and_query_adding = GetClockTimeInUS();
 		delete hamming_vptree;
-		delete edit_vptree;
 		hamming_vptree = NULL;
-		edit_vptree = NULL;
+		for (int i = 0; i < MAX_WORD_LENGTH; i++) {
+			delete edit_vptree[i];
+			edit_vptree[i] = NULL;
+		}
 	}
 	pthread_rwlock_unlock(&vpTreeLock);
 }
@@ -555,7 +574,12 @@ void* WordSearcher(void* arg) {
 
 		if (searchtype & SEARCH_EDIT) {
 			std::vector<std::string> results[tau];
-			edit_vptree->search(doc_word_string, tau, results);
+#if ENABLE_MULTI_EDITVPTREE
+			int len = doc_word_string.length();
+			edit_vptree[len]->search(doc_word_string, tau, results);
+#else
+			edit_vptree[0]->search(doc_word_string, tau, results);
+#endif
 			for (int i = 0; i < tau; i++) {
 				rs->results_edit[i] = do_union_y(&results[i]);
 			}
