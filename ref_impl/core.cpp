@@ -36,10 +36,9 @@
 #include "common.h"
 using namespace std;
 
-// Threads to alloc
-#define THREAD_N 4
 // Threads to create
 int thread_n = THREAD_N;
+__thread int thread_id;
 // Then `Threads create' is threadsPool.n
 
 #define INVALID_DOC_ID 0
@@ -223,7 +222,8 @@ ErrorCode DestroyIndex(){
 				+ stats.total_indexing_and_query_adding;
 		// double parallel_ut = stats.total_parallel_user_time
 		//                    + stats.total_indexing_and_query_adding;
-		double parallel_ut = 32.3717e6;
+		double parallel_ut = 32.3717e6; // ENABLE_RESULT_CACHE
+		// double parallel_ut = 54.3972e6; // ! ENABLE_RESULT_CACHE
 		double P_estimated = (parallel / parallel_ut - 1.0) / (1.0 / threadsPool.n - 1.0);
 		double speedup_12 = 1.0 / (1.0 - P_estimated) + (P_estimated / 12.0);
 		double speedup_24 = 1.0 / (1.0 - P_estimated) + (P_estimated / 24.0);
@@ -298,7 +298,9 @@ void* MTWorker(void* arg) {
 	DocID last_doc_id = INVALID_DOC_ID;
 	struct RequestResponse* rr = (struct RequestResponse*)arg;
 	int tid = rr->tid;
+	thread_id = tid;
 	thread_fprintf(stderr, "MTWorker[%d] starting\n", tid);
+	vptree_thread_init();
 	pthread_mutex_lock(&threadsPool.lock);
 	threadsPool.available[tid] = 1;
 	pthread_cond_signal(&threadsPool.cond);

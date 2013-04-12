@@ -22,4 +22,10 @@ struct stats {
 };
 
 extern struct stats stats;
+extern __thread int thread_id;
+
+// Threads to alloc
+#define THREAD_N 4
+// Threads to create
+extern int thread_n;
 #endif

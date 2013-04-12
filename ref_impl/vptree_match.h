@@ -9,4 +9,5 @@ ErrorCode VPTreeQueryRemove(QueryID query_id);
 // ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str);
 ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids);
 
+void vptree_thread_init();
 #endif

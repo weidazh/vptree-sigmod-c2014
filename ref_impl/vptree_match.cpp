@@ -20,6 +20,9 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 /* Iterator to pointer */
 #define I2P(x) (&(*(x)))
 
+#define ENABLE_RESULT_CACHE 1
+#define ENABLE_GLOBAL_RESULT_CACHE 0
+
 static int perf_counter_hamming = 0;
 static int perf_counter_edit = 0;
 // must be int
@@ -158,9 +161,15 @@ public:
 	}
 };
 
+#if ENABLE_RESULT_CACHE
 typedef std::map<std::string, ResultSet*> ResultCache;
-pthread_mutex_t resultCacheLock = PTHREAD_MUTEX_INITIALIZER;
+#if ENABLE_GLOBAL_RESULT_CACHE
+pthread_rwlock_t resultCacheLock = PTHREAD_RWLOCK_INITIALIZER;
 ResultCache resultCache;
+#endif
+ResultCache __threadResultCache[THREAD_N];
+__thread ResultCache* threadResultCache;
+#endif
 
 static const char* next_word_in_query(const char* query_str) {
 	while (NON_NULL(query_str))
@@ -215,14 +224,21 @@ static void new_vptrees_unless_exists() {
 		old_perf_hamming = perf_counter_hamming;
 		old_perf_edit = perf_counter_edit;
 
-		pthread_mutex_lock(&resultCacheLock);
+#if ENABLE_RESULT_CACHE
+#if ENABLE_GLOBAL_RESULT_CACHE
+		pthread_rwlock_wrlock(&resultCacheLock);
 		for(ResultCache::iterator i = resultCache.begin();
 			i != resultCache.end();
 			i++ ) {
 			delete i->second;
 		}
 		resultCache.clear();
-		pthread_mutex_unlock(&resultCacheLock);
+		pthread_rwlock_unlock(&resultCacheLock);
+#endif
+		for (int i = 0; i < thread_n; i++) {
+			__threadResultCache[i].clear();
+		}
+#endif
 		long long end = GetClockTimeInUS();
 		/* As we have the vpTreeLock, I can access the stats safely */
 		stats.total_indexing += end - start;
@@ -399,6 +415,28 @@ void words_to_queries(SET* matchedHammingWords, SET* matchedEditWords, std::vect
 		}
 	}
 }
+
+ResultSet* findCachedResult(std::string doc_word_string) {
+	ResultSet* rs = NULL;
+#if ENABLE_RESULT_CACHE
+	ResultCache::iterator found;
+	found = threadResultCache->find(doc_word_string);
+	if(found != threadResultCache->end())
+		return found->second;
+
+#if ENABLE_GLOBAL_RESULT_CACHE
+	pthread_rwlock_rdlock(&resultCacheLock);
+	found = resultCache.find(doc_word_string);
+
+	if (found != resultCache.end()) {
+		rs = found->second;
+	}
+	pthread_rwlock_unlock(&resultCacheLock);
+#endif
+#endif
+	return rs;
+}
+
 ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids)
 {
 	long long start = GetClockTimeInUS();
@@ -416,12 +454,10 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			continue;
 		docWords.insert(doc_word_string);
 
-		pthread_mutex_lock(&resultCacheLock);
-		ResultCache::iterator found = resultCache.find(doc_word_string);
+		ResultSet* foundResult = findCachedResult(doc_word_string);
 		ResultSet* rs;
 
-		if (found == resultCache.end()) {
-			pthread_mutex_unlock(&resultCacheLock);
+		if (foundResult == NULL) {
 			rs = new ResultSet();
 			std::vector<std::string> results[TAU];
 
@@ -441,13 +477,10 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			for (int i = 0; i< TAU; i++)
 				rs->results_edit[i] = do_union_y(&results[i]);
 
-			pthread_mutex_lock(&resultCacheLock);
-			resultCache.insert(std::pair<std::string, ResultSet*>(doc_word_string, rs));
-			pthread_mutex_unlock(&resultCacheLock);
+			threadResultCache->insert(std::pair<std::string, ResultSet*>(doc_word_string, rs));
 		}
 		else {
-			rs = found->second;
-			pthread_mutex_unlock(&resultCacheLock);
+			rs = foundResult;
 		}
 
 		for (int i = 0; i < TAU; i++)
@@ -456,6 +489,14 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			do_union(&matchedEditWords[i], &rs->results_edit[i]);
 	}
 	// fprintf(stdout, "searching doc %d hamming/edit = %d/%d\n", doc_id, perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
+#if ENABLE_RESULT_CACHE
+#if ENABLE_GLOBAL_RESULT_CACHE
+	pthread_rwlock_wrlock(&resultCacheLock);
+	resultCache.insert(threadResultCache->begin(), threadResultCache->end());
+	pthread_rwlock_unlock(&resultCacheLock);
+	threadResultCache->clear();
+#endif
+#endif
 
 	for (int i = 1; i < TAU; i++)
 		do_union(&matchedHammingWords[i], &matchedHammingWords[i - 1]);
@@ -478,4 +519,8 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 	pthread_mutex_unlock(&total_parallel_user_time_lock);
 
 	return EC_SUCCESS;
+}
+
+void vptree_thread_init() {
+	threadResultCache = &__threadResultCache[thread_id];
 }
