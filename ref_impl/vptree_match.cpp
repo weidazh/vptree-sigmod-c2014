@@ -8,6 +8,7 @@
 #include <vector>
 #include <set>
 #include <map>
+#include "common.h"
 
 #define NON_NULL(a) ((*(a)) && ((*(a)) != ' '))
 
@@ -190,6 +191,7 @@ static void new_vptrees_unless_exists() {
 	std::vector<std::string> editWordList;
 	pthread_rwlock_wrlock(&vpTreeLock);
 	if (! hamming_vptree) {
+		long long start = GetClockTimeInUS();
 		hamming_vptree = new HammingVpTree();
 		edit_vptree = new EditVpTree();
 		pthread_rwlock_rdlock(&wordMapLock);
@@ -221,6 +223,10 @@ static void new_vptrees_unless_exists() {
 		}
 		resultCache.clear();
 		pthread_mutex_unlock(&resultCacheLock);
+		long long end = GetClockTimeInUS();
+		/* As we have the vpTreeLock, I can access the stats safely */
+		stats.total_indexing += end - start;
+
 	}
 	pthread_rwlock_unlock(&vpTreeLock);
 }

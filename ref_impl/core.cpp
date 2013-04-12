@@ -33,6 +33,7 @@
 #include <vector>
 #include <ctime>
 #include <pthread.h>
+#include "common.h"
 using namespace std;
 
 #define THREAD_N 4
@@ -40,20 +41,7 @@ using namespace std;
 #define thread_fprintf(...)
 // #define thread_fprintf fprintf
 ////////////////
-#include <sys/time.h>
-static long long GetClockTimeInUS()
-{
-	struct timeval t2;
-	gettimeofday(&t2,NULL);
-	return t2.tv_sec*1000000LL+t2.tv_usec;
-}
-struct stats {
-	long long total_wait;
-	long long start_serial;
-	long long total_serial;
-	long long start_parallel;
-	long long total_parallel;
-} stats;
+struct stats stats;
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 // Computes edit distance between a null-terminated string "a" with length "na"
@@ -207,10 +195,16 @@ ErrorCode InitializeIndex(){
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
+#define SHOW_STATS(total_what) ""#total_what" = %lld.%06lld\n", \
+			total_what / 1000000LL, \
+			total_what % 1000000LL
+
 ErrorCode DestroyIndex(){
-	fprintf(stderr, "stats.total_wait = %lld.%06lld\n", stats.total_wait / 1000000LL, stats.total_wait % 1000000LL);
-	fprintf(stderr, "stats.total_serial = %lld.%06lld\n", stats.total_serial / 1000000LL, stats.total_serial % 1000000LL);
-	fprintf(stderr, "stats.total_parallel = %lld.%06lld\n", stats.total_parallel / 1000000LL, stats.total_parallel % 1000000LL);
+	fprintf(stderr, SHOW_STATS(stats.total_wait));
+	fprintf(stderr, SHOW_STATS(stats.total_serial));
+	fprintf(stderr, SHOW_STATS(stats.total_parallel));
+	fprintf(stderr, SHOW_STATS(stats.total_indexing));
+
 	KillThreads();
 	return EC_SUCCESS;
 }
