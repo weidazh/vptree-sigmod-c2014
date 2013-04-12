@@ -21,10 +21,14 @@ struct stats {
 };
 
 extern struct stats stats;
+#define MASTER_THREAD 1
+#define DOC_WORKER_THREAD 2
+#define WORD_SEARCHER_THREAD 3
+extern __thread int thread_type;
 extern __thread int thread_id;
 
-// Threads to alloc
-#define THREAD_N 24
-// Threads to create
-extern int thread_n;
+#define DOC_WORKER_N 24
+extern int doc_worker_n;
+#define WORD_SEARCHER_N 24
+extern int word_searcher_n;
 #endif

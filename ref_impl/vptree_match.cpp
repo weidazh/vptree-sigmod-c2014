@@ -86,7 +86,7 @@ public:
 		: word(word), hamming_queries(0), edit_queries(0), first_word_queries() {
 
 		// pthread_mutex_lock(&max_word_id_lock);
-		word_id = thread_max_word_id * THREAD_N + thread_id;
+		word_id = thread_max_word_id * DOC_WORKER_N + thread_id;
 		thread_max_word_id += 1;
 		// pthread_mutex_unlock(&max_word_id_lock);
 	}
@@ -168,7 +168,7 @@ typedef std::map<std::string, ResultSet*> ResultCache;
 pthread_rwlock_t resultCacheLock = PTHREAD_RWLOCK_INITIALIZER;
 ResultCache resultCache;
 #endif
-ResultCache __threadResultCache[THREAD_N];
+ResultCache __threadResultCache[DOC_WORKER_N];
 __thread ResultCache* threadResultCache;
 #endif
 
@@ -461,44 +461,72 @@ struct WordRequestResponse {
 	int searchtype; // 1 for hamming, 2 for edit; 3 for hamming+edit
 	int tau; // TAU
 	ResultSet* rs;
+	int waiting_doc_worker;
 };
 
 #define WRRN 24
 #define REQ_N (WRRN)
-#define RESP_N (WRRN * 2 + 1)
-#define WORD_SEARCHER_N 24
-struct WordRequestResponseRing {
-	struct WordRequestResponse* req[REQ_N];
+#define RESP_N (WRRN * 20 + 1)
+struct WordResponseRing {
 	struct WordRequestResponse* resp[RESP_N];
-	int reqhead;
-	int reqtail;
-	int resphead;
-	int resptail;
-	int worker_threads;
-	pthread_t pts[WORD_SEARCHER_N];
-
-	pthread_mutex_t pts_lock;
-	pthread_mutex_t lock;
-	pthread_cond_t new_req;
-	pthread_cond_t req_got;
+	int doc_worker_id;
+	int head;
+	int tail;
 	pthread_cond_t new_resp;
 	pthread_cond_t resp_got;
 
+	WordResponseRing(int doc_worker_id):
+		head(0), tail(0),
+		doc_worker_id(doc_worker_id)
+	{
+		pthread_cond_init(&this->new_resp, NULL);
+		pthread_cond_init(&this->resp_got, NULL);
+	}
+};
+struct WordRequestResponseRing {
+	struct WordRequestResponse* req[REQ_N];
+	WordResponseRing* respring[WORD_SEARCHER_N];
+	int reqhead;
+	int reqtail;
+	int worker_threads;
+	pthread_t pts[WORD_SEARCHER_N];
+	pthread_mutex_t pts_lock;
+
+	pthread_mutex_t lock;
+	pthread_cond_t new_req;
+	pthread_cond_t req_got;
+
+	// pthread_cond_t new_resp[DOC_WORKER_N];
+	// pthread_cond_t resp_got;
+	pthread_cond_t resp_cond;
+
 	WordRequestResponseRing():
-		reqhead(0), reqtail(0), resphead(0), resptail(0),
+		reqhead(0), reqtail(0),
 		worker_threads(0)
 	{
 		pthread_mutex_init(&this->pts_lock, NULL);
 		pthread_mutex_init(&this->lock, NULL);
 		pthread_cond_init(&this->new_req, NULL);
 		pthread_cond_init(&this->req_got, NULL);
-		pthread_cond_init(&this->new_resp, NULL);
-		pthread_cond_init(&this->resp_got, NULL);
+		for (int i = 0; i < DOC_WORKER_N; i++)
+			respring[i] = new WordResponseRing(i);
+		// for(int i = 0; i < DOC_WORKER_N; i++)
+		// 	pthread_cond_init(&this->new_resp[i], NULL);
+		// pthread_cond_init(&this->resp_got, NULL);
+		pthread_cond_init(&this->resp_cond, NULL);
 	}
 };
 
+struct WordSearcherArg {
+	int tid;
+	struct WordRequestResponseRing* ring;
+};
 void* WordSearcher(void* arg) {
-	struct WordRequestResponseRing* ring = (struct WordRequestResponseRing*)arg;
+	WordSearcherArg* wordSearcher = (WordSearcherArg*)arg;
+	struct WordRequestResponseRing* ring = (struct WordRequestResponseRing*)wordSearcher->ring;
+	thread_type = WORD_SEARCHER_THREAD;
+	thread_id = wordSearcher->tid;
+	delete wordSearcher;
 	pthread_mutex_lock(&ring->lock);
 	while (1) {
 		while (ring->reqhead == ring->reqtail) {
@@ -510,6 +538,7 @@ void* WordSearcher(void* arg) {
 		pthread_cond_signal(&ring->req_got);
 		int searchtype = wrr->searchtype;
 		int tau = wrr->tau;
+		int waiting_doc_worker = wrr->waiting_doc_worker;
 		std::string doc_word_string = wrr->doc_word_string;
 		pthread_mutex_unlock(&ring->lock);
 
@@ -532,27 +561,30 @@ void* WordSearcher(void* arg) {
 		wrr->rs = rs;
 
 		pthread_mutex_lock(&ring->lock);
-		while ((ring->resptail + 1) % WRRN == ring->resphead) {
-			pthread_cond_wait(&ring->resp_got, &ring->lock);
+		WordResponseRing* respring = ring->respring[waiting_doc_worker];
+		while ((respring->tail + 1) % WRRN == respring->head) {
+			pthread_cond_wait(&respring->resp_got, &ring->lock);
 		}
-		ring->resp[ring->resptail] = wrr;
-		ring->resptail = (ring->resptail + 1) % WRRN;
-		pthread_cond_signal(&ring->new_resp);
+		respring->resp[respring->tail] = wrr;
+		respring->tail = (respring->tail + 1) % WRRN;
+		pthread_cond_signal(&respring->new_resp);
+		pthread_cond_signal(&ring->req_got);
 	}
 	pthread_mutex_unlock(&ring->lock);
 }
 // Send request and possible return response.
 struct WordRequestResponse* WaitSearchWordResponse(struct WordRequestResponseRing* ring) {
 	WordRequestResponse* response = NULL;
+	WordResponseRing* respring = ring->respring[thread_id];
 	pthread_mutex_lock(&ring->lock);
-	while (ring->resphead == ring->resptail) {
-		pthread_cond_wait(&ring->new_resp, &ring->lock);
+	while (respring->head == respring->tail) {
+		pthread_cond_wait(&respring->new_resp, &ring->lock);
 	}
 
 	// assume only one document thread
-	response = ring->resp[ring->resphead];
-	ring->resphead = (ring->resphead + 1) % WRRN;
-	pthread_cond_signal(&ring->resp_got);
+	response = respring->resp[respring->head];
+	respring->head = (respring->head + 1) % WRRN;
+	pthread_cond_signal(&respring->resp_got);
 	pthread_mutex_unlock(&ring->lock);
 	return response;
 }
@@ -560,8 +592,11 @@ struct WordRequestResponse* WaitSearchWordResponse(struct WordRequestResponseRin
 void CreateWordSearchers(struct WordRequestResponseRing* ring, int n) {
 	pthread_mutex_lock(&ring->pts_lock);
 	while (ring->worker_threads < n) {
+		WordSearcherArg* arg = new WordSearcherArg();
+		arg->tid = ring->worker_threads;
+		arg->ring = ring;
 		int ret_val = pthread_create(&ring->pts[ring->worker_threads],
-				NULL, WordSearcher, ring);
+				NULL, WordSearcher, arg);
 		if (ret_val != 0) {
 			perror("Pthread create error!");
 			exit(1);
@@ -572,27 +607,23 @@ void CreateWordSearchers(struct WordRequestResponseRing* ring, int n) {
 
 }
 struct WordRequestResponse* SendSearchWordRequest(struct WordRequestResponseRing* ring,
-			std::string doc_word_string, int searchtype, int tau) {
+			struct WordRequestResponse* request) {
 
 	WordRequestResponse* response = NULL;
-	WordRequestResponse* request = new WordRequestResponse();
-	request->doc_word_string = doc_word_string;
-	request->searchtype = searchtype;
-	request->tau = tau;
-
 	pthread_mutex_lock(&ring->lock);
-	if ((ring->reqtail + 1) % WRRN == ring->reqhead) {
+	WordResponseRing* respring = ring->respring[thread_id];
+	while ((ring->reqtail + 1) % WRRN == ring->reqhead) {
 		// assume only one document thread
-		while (ring->resphead == ring->resptail) {
-			pthread_cond_wait(&ring->new_resp, &ring->lock);
-		}
-		if (ring->resphead != ring->resptail) {
-			response = ring->resp[ring->resphead];
-			ring->resphead = (ring->resphead + 1) % WRRN;
-			pthread_cond_signal(&ring->resp_got);
-		}
-		while ((ring->reqtail + 1) % WRRN == ring->reqhead) {
+		while ((response != NULL || respring->head == respring->tail) &&
+			(ring->reqtail + 1) % WRRN == ring->reqhead) {
 			pthread_cond_wait(&ring->req_got, &ring->lock);
+		}
+		if (response == NULL && respring->head != respring->tail) {
+			response = respring->resp[respring->head];
+			respring->head = (respring->head + 1) % WRRN;
+			pthread_cond_signal(&respring->resp_got);
+			pthread_mutex_unlock(&ring->lock);
+			return response;
 		}
 
 	}
@@ -601,7 +632,7 @@ struct WordRequestResponse* SendSearchWordRequest(struct WordRequestResponseRing
 	pthread_cond_signal(&ring->new_req);
 	pthread_mutex_unlock(&ring->lock);
 
-	return response;
+	return NULL;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -625,6 +656,7 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			doc_word = next_word_in_query(doc_word)) {
 		ResultSet* rs = NULL;
 		WordRequestResponse* response = NULL;
+		WordRequestResponse* request = NULL;
 		if (*doc_word) {
 			std::string doc_word_string = word_to_string(doc_word); // SPEED UP: question, I cannot reuse the pointer doc_str, but can I change *doc_str? */
 
@@ -633,15 +665,27 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			docWords.insert(doc_word_string);
 
 			rs = findCachedResult(doc_word_string);
+
+			if (rs == NULL) {
+				request = new WordRequestResponse();
+				request->waiting_doc_worker = thread_id;
+				request->doc_word_string = doc_word_string;
+				request->searchtype = SEARCH_HAMMING_EDIT;
+				request->tau = TAU;
+			}
 		}
 
-		if (rs == NULL && *doc_word) {
+resend_the_request:
+		if (request) {
 			std::string doc_word_string = word_to_string(doc_word);
-			in_flight += 1;
-			response = SendSearchWordRequest(ring, doc_word_string,
-					SEARCH_HAMMING_EDIT, TAU);
+			response = SendSearchWordRequest(ring, request);
+			if (response == NULL) {
+				request = NULL; // so that I do not resend the request
+				in_flight += 1;
+			}
+
 		}
-		else if (rs == NULL && !*doc_word) {
+		else if (! *doc_word) {
 			response = WaitSearchWordResponse(ring);
 		}
 
@@ -652,6 +696,7 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			threadResultCache->insert(std::pair<std::string, ResultSet*>(response->doc_word_string, rs));
 #endif
 			delete response;
+			response = NULL;
 		}
 
 		if (rs) {
@@ -660,6 +705,8 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			for (int i = 0; i < TAU; i++)
 				do_union(&matchedEditWords[i], &rs->results_edit[i]);
 		}
+		if (request)
+			goto resend_the_request;
 	}
 	// fprintf(stdout, "searching doc %d hamming/edit = %d/%d\n", doc_id, perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
 #if ENABLE_RESULT_CACHE

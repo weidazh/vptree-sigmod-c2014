@@ -37,8 +37,9 @@
 using namespace std;
 
 // Threads to create
-int thread_n = THREAD_N;
+int doc_worker_n = DOC_WORKER_N;
 __thread int thread_id;
+__thread int thread_type;
 // Then `Threads create' is threadsPool.n
 
 #define INVALID_DOC_ID 0
@@ -167,12 +168,12 @@ struct RequestResponse {
 struct ThreadsPool {
 	int n;
 	int in_flight;
-	pthread_t pt[THREAD_N];
-	struct RequestResponse rr[THREAD_N];
+	pthread_t pt[DOC_WORKER_N];
+	struct RequestResponse rr[DOC_WORKER_N];
 
 	pthread_mutex_t lock;
 	pthread_cond_t cond;
-	int available[THREAD_N];
+	int available[DOC_WORKER_N];
 };
 
 struct ThreadsPool threadsPool;
@@ -183,18 +184,21 @@ int CreateThread();
 void KillThreads();
 
 ErrorCode InitializeIndex(){
-	char* env_thread_n;
-	if ((env_thread_n = getenv("THREAD_N")) != NULL) {
-		thread_n = atoi(env_thread_n);
+	char* env_doc_worker_n;
+	if ((env_doc_worker_n = getenv("DOC_WORKER_N")) != NULL) {
+		doc_worker_n = atoi(env_doc_worker_n);
 	}
-	fprintf(stderr, "thread_n = %d\n", thread_n);
-	if (thread_n > THREAD_N) {
-		fprintf(stderr, "thread_n > THREAD_N\n");
+	fprintf(stderr, "doc_worker_n = %d\n", doc_worker_n);
+	if (doc_worker_n > DOC_WORKER_N) {
+		fprintf(stderr, "doc_worker_n > DOC_WORKER_N\n");
 		exit(1);
 	}
 	threadsPool.n = 0;
 	pthread_mutex_init(&threadsPool.lock, NULL);
 	pthread_cond_init(&threadsPool.cond, NULL);
+
+	vptree_thread_init();
+
 	while ( CreateThread() != -1);
 	srand(time(NULL));
 
@@ -303,9 +307,9 @@ void* MTWorker(void* arg) {
 	DocID last_doc_id = INVALID_DOC_ID;
 	struct RequestResponse* rr = (struct RequestResponse*)arg;
 	int tid = rr->tid;
+	thread_type = DOC_WORKER_THREAD;
 	thread_id = tid;
 	thread_fprintf(stderr, "MTWorker[%d] starting\n", tid);
-	vptree_thread_init();
 	pthread_mutex_lock(&threadsPool.lock);
 	threadsPool.available[tid] = 1;
 	pthread_cond_signal(&threadsPool.cond);
@@ -356,7 +360,7 @@ int CreateThread() {
 	int ret_val;
 	int n = threadsPool.n;
 
-	if (n >= thread_n)
+	if (n >= doc_worker_n)
 		return -1;
 
 	pthread_mutex_init(&threadsPool.rr[n].lock, NULL);
@@ -462,7 +466,7 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 {
 	int n;
 	int i;
-	int Q[THREAD_N];
+	int Q[DOC_WORKER_N];
 	// Get the first undeliverd resuilt from "docs" and return it
 	if (docs.size() == 0 && threadsPool.in_flight) {
 		long long start = GetClockTimeInUS();
