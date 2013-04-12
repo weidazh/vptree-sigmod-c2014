@@ -16,6 +16,9 @@ struct stats {
 	long long start_parallel;
 	long long total_parallel;
 	long long total_indexing;
+	long long start_indexing_and_query_adding;
+	long long total_indexing_and_query_adding;
+	long long total_parallel_user_time;
 };
 
 extern struct stats stats;

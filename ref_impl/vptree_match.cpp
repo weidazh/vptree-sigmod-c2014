@@ -226,6 +226,8 @@ static void new_vptrees_unless_exists() {
 		long long end = GetClockTimeInUS();
 		/* As we have the vpTreeLock, I can access the stats safely */
 		stats.total_indexing += end - start;
+		stats.total_indexing_and_query_adding = GetClockTimeInUS() - stats.start_indexing_and_query_adding;
+		stats.start_parallel = GetClockTimeInUS();
 
 	}
 	pthread_rwlock_unlock(&vpTreeLock);
@@ -234,6 +236,8 @@ static void new_vptrees_unless_exists() {
 static void clear_vptrees() {
 	pthread_rwlock_wrlock(&vpTreeLock);
 	if (hamming_vptree) {
+		stats.total_parallel += GetClockTimeInUS() - stats.start_parallel;
+		stats.start_indexing_and_query_adding = GetClockTimeInUS();
 		delete hamming_vptree;
 		delete edit_vptree;
 		hamming_vptree = NULL;
@@ -397,6 +401,7 @@ void words_to_queries(SET* matchedHammingWords, SET* matchedEditWords, std::vect
 }
 ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids)
 {
+	long long start = GetClockTimeInUS();
 	new_vptrees_unless_exists();
 	SET matchedHammingWords[TAU];
 	SET matchedEditWords[TAU];
@@ -465,6 +470,12 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 
 	// performace: change iterator to const_iterator if possible.
 	std::sort(query_ids.begin(), query_ids.end());
+
+	long long end = GetClockTimeInUS();
+	static pthread_mutex_t total_parallel_user_time_lock = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutex_lock(&total_parallel_user_time_lock);
+	stats.total_parallel_user_time += end - start;
+	pthread_mutex_unlock(&total_parallel_user_time_lock);
 
 	return EC_SUCCESS;
 }

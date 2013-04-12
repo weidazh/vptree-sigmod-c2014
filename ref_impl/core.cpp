@@ -190,6 +190,7 @@ ErrorCode InitializeIndex(){
 	stats.total_serial = 0;
 	stats.start_parallel = GetClockTimeInUS();
 	stats.total_parallel = 0;
+	stats.start_indexing_and_query_adding = GetClockTimeInUS();
 	return EC_SUCCESS;
 }
 
@@ -200,11 +201,35 @@ ErrorCode InitializeIndex(){
 			total_what % 1000000LL
 
 ErrorCode DestroyIndex(){
+	stats.total_parallel += GetClockTimeInUS() - stats.start_parallel;
 	fprintf(stderr, SHOW_STATS(stats.total_wait));
 	fprintf(stderr, SHOW_STATS(stats.total_serial));
 	fprintf(stderr, SHOW_STATS(stats.total_parallel));
 	fprintf(stderr, SHOW_STATS(stats.total_indexing));
+	fprintf(stderr, SHOW_STATS(stats.total_indexing_and_query_adding));
 
+        if (THREAD_N != 1) {
+		double parallel = stats.total_parallel
+		                   + stats.total_indexing_and_query_adding;
+		// double parallel_ut = stats.total_parallel_user_time
+		//                    + stats.total_indexing_and_query_adding;
+		double parallel_ut = 63e6;
+		double P_estimated = (parallel / parallel_ut - 1.0) /
+				     (1.0 / THREAD_N - 1.0);
+		double speedup_12 = 1.0 / (1.0 - P_estimated) + (P_estimated / 12.0);
+		double speedup_24 = 1.0 / (1.0 - P_estimated) + (P_estimated / 24.0);
+		fprintf(stderr, "According Amdahl's law,\n");
+		fprintf(stderr, "P_estimated is the portion that is parallel\n");
+		fprintf(stderr, "P_estimated = %.4f\n", P_estimated);
+		fprintf(stderr, "Expected speedup,time in 12 cores: %.1f, %.1f\n",
+		                speedup_12, parallel_ut /1e6 / speedup_12);
+		fprintf(stderr, "Expected speedup,time in 24 cores: %.1f, %.1f\n",
+		                speedup_24, parallel_ut /1e6 / speedup_24);
+	}
+	else {
+		double single_thread = 61.5e6 - stats.total_indexing;
+		fprintf(stderr, "Single thread, this portion runs %.4f s\n", single_thread / 1e6);
+	}
 	KillThreads();
 	return EC_SUCCESS;
 }
@@ -410,7 +435,6 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 	}
 	if (threadsPool.in_flight == 0) {
 		stats.total_serial += GetClockTimeInUS() - stats.start_serial;
-		stats.start_parallel = GetClockTimeInUS();
 	}
 	return MTVPTreeMatchDocument(doc_id, doc_str);
 }
@@ -439,7 +463,6 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 		pthread_mutex_unlock(&threadsPool.lock);
 		long long end = GetClockTimeInUS();
 		stats.total_wait += (end - start);
-		stats.total_parallel += GetClockTimeInUS() - stats.start_parallel;
 	}
 	if (docs.size() == 0) {
 		*p_doc_id = 0;
