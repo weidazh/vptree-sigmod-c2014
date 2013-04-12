@@ -230,29 +230,6 @@ ErrorCode DestroyIndex(){
 	fprintf(stderr, SHOW_STATS(stats.total_indexing_and_query_adding));
 	fprintf(stderr, SHOW_STATS(stats.total_resultmerging));
 
-	if (threadsPool.n != 1) {
-		double parallel = stats.total_parallel
-				+ stats.total_indexing_and_query_adding;
-
-		double parallel_ut = 28.9321e6; // Gideon II single thread, Thread Result Cache
-		// double parallel_ut = 32.3717e6; // ENABLE_RESULT_CACHE
-		// double parallel_ut = 54.3972e6; // ! ENABLE_RESULT_CACHE
-		double P_estimated = (parallel / parallel_ut - 1.0) / (1.0 / threadsPool.n - 1.0);
-		double speedup_12 = 1.0 / (1.0 - P_estimated) + (P_estimated / 12.0);
-		double speedup_24 = 1.0 / (1.0 - P_estimated) + (P_estimated / 24.0);
-		fprintf(stderr, "According Amdahl's law,\n");
-		fprintf(stderr, "P_estimated is the portion that is parallel\n");
-		fprintf(stderr, "P_estimated = %.4f\n", P_estimated);
-		fprintf(stderr, "Expected speedup,time in 12 cores: %.1f, %.1f\n",
-				speedup_12, parallel_ut /1e6 / speedup_12);
-		fprintf(stderr, "Expected speedup,time in 24 cores: %.1f, %.1f\n",
-				speedup_24, parallel_ut /1e6 / speedup_24);
-	}
-	else {
-		double single_thread = stats.total_parallel
-				+ stats.total_indexing_and_query_adding;
-		fprintf(stderr, "Single thread, this portion runs %.4f s\n", single_thread / 1e6);
-	}
 	return EC_SUCCESS;
 }
 
