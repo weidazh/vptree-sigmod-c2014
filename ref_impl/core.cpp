@@ -197,7 +197,7 @@ ErrorCode InitializeIndex(){
 	pthread_mutex_init(&threadsPool.lock, NULL);
 	pthread_cond_init(&threadsPool.cond, NULL);
 
-	vptree_thread_init();
+	vptree_system_init();
 
 	while ( CreateThread() != -1);
 	srand(time(NULL));
@@ -249,7 +249,7 @@ ErrorCode DestroyIndex(){
 		fprintf(stderr, "Single thread, this portion runs %.4f s\n", single_thread / 1e6);
 	}
 	KillThreads();
-	vptree_thread_destroy();
+	vptree_system_destroy();
 	return EC_SUCCESS;
 }
 
@@ -310,6 +310,7 @@ void* MTWorker(void* arg) {
 	thread_type = DOC_WORKER_THREAD;
 	thread_id = tid;
 	thread_fprintf(stderr, "MTWorker[%d] starting\n", tid);
+	vptree_doc_worker_init();
 	pthread_mutex_lock(&threadsPool.lock);
 	threadsPool.available[tid] = 1;
 	pthread_cond_signal(&threadsPool.cond);

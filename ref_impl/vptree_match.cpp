@@ -243,7 +243,7 @@ static void new_vptrees_unless_exists() {
 		resultCache.clear();
 		pthread_rwlock_unlock(&resultCacheLock);
 #endif
-		for (int i = 0; i < thread_n; i++) {
+		for (int i = 0; i < doc_worker_n; i++) {
 			__threadResultCache[i].clear();
 		}
 #endif
@@ -395,9 +395,9 @@ void words_to_queries(SET* matchedHammingWords, SET* matchedEditWords, std::vect
 		i != matchedEditWords[3].end();
 		i++) {
 
-		pthread_rwlock_rdlock(&wordMapLock);
+		// pthread_rwlock_rdlock(&wordMapLock);
 		Word* word = I2P(wordMapByID.find(*i)->second);
-		pthread_rwlock_unlock(&wordMapLock);
+		// pthread_rwlock_unlock(&wordMapLock);
 		for(std::set<QueryID>::iterator j = word->begin();
 			j != word->end();
 			j++) {
@@ -405,9 +405,9 @@ void words_to_queries(SET* matchedHammingWords, SET* matchedEditWords, std::vect
 			bool match = true;
 
 			QueryID query_id = *j;
-			pthread_rwlock_rdlock(&queryMapLock);
+			// pthread_rwlock_rdlock(&queryMapLock);
 			Query* query = I2P(queryMap.find(query_id)->second);
-			pthread_rwlock_unlock(&queryMapLock);
+			// pthread_rwlock_unlock(&queryMapLock);
 			for (int j = 0; j < MAX_QUERY_WORDS && query->word_ids[j] != -1; j++) {
 				int id = query->word_ids[j];
 				// if query is hamming
@@ -735,10 +735,13 @@ resend_the_request:
 	return EC_SUCCESS;
 }
 
-void vptree_thread_init() {
+void vptree_doc_worker_init() {
 #if ENABLE_RESULT_CACHE
 	threadResultCache = &__threadResultCache[thread_id];
 #endif
+}
+
+void vptree_system_init() {
 	ring = new WordRequestResponseRing();
 
 	char* env_word_searcher_n;
@@ -754,6 +757,6 @@ void vptree_thread_init() {
 	CreateWordSearchers(ring, word_searcher_n);
 }
 
-void vptree_thread_destroy() {
+void vptree_system_destroy() {
 	delete ring;
 }
