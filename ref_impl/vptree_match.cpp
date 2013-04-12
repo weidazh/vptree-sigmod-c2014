@@ -474,6 +474,7 @@ struct WordResponseRing {
 	int tail;
 	pthread_cond_t new_resp;
 	pthread_cond_t resp_got;
+	pthread_mutex_t lock;
 
 	WordResponseRing(int doc_worker_id):
 		head(0), tail(0),
@@ -481,6 +482,7 @@ struct WordResponseRing {
 	{
 		pthread_cond_init(&this->new_resp, NULL);
 		pthread_cond_init(&this->resp_got, NULL);
+		pthread_mutex_init(&this->lock, NULL);
 	}
 };
 struct WordRequestResponseRing {
@@ -560,14 +562,17 @@ void* WordSearcher(void* arg) {
 		}
 		wrr->rs = rs;
 
-		pthread_mutex_lock(&ring->lock);
 		WordResponseRing* respring = ring->respring[waiting_doc_worker];
+		pthread_mutex_lock(&respring->lock);
 		while ((respring->tail + 1) % WRRN == respring->head) {
-			pthread_cond_wait(&respring->resp_got, &ring->lock);
+			pthread_cond_wait(&respring->resp_got, &respring->lock);
 		}
 		respring->resp[respring->tail] = wrr;
 		respring->tail = (respring->tail + 1) % WRRN;
 		pthread_cond_signal(&respring->new_resp);
+		pthread_mutex_unlock(&respring->lock);
+
+		pthread_mutex_lock(&ring->lock);
 		pthread_cond_signal(&ring->req_got);
 	}
 	pthread_mutex_unlock(&ring->lock);
@@ -576,16 +581,16 @@ void* WordSearcher(void* arg) {
 struct WordRequestResponse* WaitSearchWordResponse(struct WordRequestResponseRing* ring) {
 	WordRequestResponse* response = NULL;
 	WordResponseRing* respring = ring->respring[thread_id];
-	pthread_mutex_lock(&ring->lock);
+	pthread_mutex_lock(&respring->lock);
 	while (respring->head == respring->tail) {
-		pthread_cond_wait(&respring->new_resp, &ring->lock);
+		pthread_cond_wait(&respring->new_resp, &respring->lock);
 	}
 
 	// assume only one document thread
 	response = respring->resp[respring->head];
 	respring->head = (respring->head + 1) % WRRN;
 	pthread_cond_signal(&respring->resp_got);
-	pthread_mutex_unlock(&ring->lock);
+	pthread_mutex_unlock(&respring->lock);
 	return response;
 }
 
@@ -618,12 +623,17 @@ struct WordRequestResponse* SendSearchWordRequest(struct WordRequestResponseRing
 			(ring->reqtail + 1) % WRRN == ring->reqhead) {
 			pthread_cond_wait(&ring->req_got, &ring->lock);
 		}
-		if (response == NULL && respring->head != respring->tail) {
-			response = respring->resp[respring->head];
-			respring->head = (respring->head + 1) % WRRN;
-			pthread_cond_signal(&respring->resp_got);
+		if ((ring->reqtail + 1) % WRRN == ring->reqhead) {
 			pthread_mutex_unlock(&ring->lock);
-			return response;
+			pthread_mutex_lock(&respring->lock);
+			if (response == NULL && respring->head != respring->tail) {
+				response = respring->resp[respring->head];
+				respring->head = (respring->head + 1) % WRRN;
+				pthread_cond_signal(&respring->resp_got);
+				pthread_mutex_unlock(&respring->lock);
+				return response;
+			}
+			pthread_mutex_lock(&ring->lock);
 		}
 
 	}
