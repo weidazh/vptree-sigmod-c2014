@@ -355,6 +355,7 @@ void* MTWorker(void* arg) {
 	pthread_mutex_lock(&threadsPool.lock);
 	stats.total_resultmerging += thread_total_resultmerging;
 	pthread_mutex_unlock(&threadsPool.lock);
+	vptree_doc_worker_destroy();
 	pthread_exit(NULL);
 	return 0;
 }

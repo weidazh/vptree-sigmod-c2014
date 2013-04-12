@@ -11,5 +11,6 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 
 void vptree_system_init();
 void vptree_doc_worker_init();
+void vptree_doc_worker_destroy();
 void vptree_system_destroy();
 #endif

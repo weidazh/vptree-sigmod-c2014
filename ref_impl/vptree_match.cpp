@@ -20,18 +20,21 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 /* Iterator to pointer */
 #define I2P(x) (&(*(x)))
 
-#define ENABLE_RESULT_CACHE 0
+#define ENABLE_RESULT_CACHE 1
 #define ENABLE_GLOBAL_RESULT_CACHE 0
 
-#define ENABLE_MULTI_EDITVPTREE 0
+#define ENABLE_MULTI_EDITVPTREE 1
 
-// static int perf_counter_hamming = 0;
-// static int perf_counter_edit = 0;
+static __thread int perf_counter_hamming = 0;
+static __thread int perf_counter_edit = 0;
+pthread_mutex_t global_counter_lock = PTHREAD_MUTEX_INITIALIZER;
+int global_perf_conter_hamming = 0;
+int global_perf_conter_edit = 0;
 // must be int
 int hamming(const std::string& a, const std::string& b) {
 	unsigned int oo = 0x7FFFFFFF;
 	unsigned int dist = HammingDistance(a.c_str(), a.length(), b.c_str(), b.length());
-	// perf_counter_hamming += 1;
+	perf_counter_hamming += 1;
 	if (dist == oo) {
 		return oo - TAU;
 	}
@@ -41,7 +44,7 @@ int hamming(const std::string& a, const std::string& b) {
 int edit(const std::string& a, const std::string& b) {
 	unsigned int oo = 0x7FFFFFFF;
 	unsigned int dist = EditDistance(a.c_str(), a.length(), b.c_str(), b.length());
-	// perf_counter_edit += 1;
+	perf_counter_edit += 1;
 	if (dist == oo) {
 		return oo - TAU;
 	}
@@ -555,6 +558,9 @@ void* WordSearcher(void* arg) {
 		}
 
 		struct WordRequestResponse* wrr = ring->req[ring->reqhead];
+		if (wrr == NULL) {
+			break;
+		}
 		ring->reqhead = (ring->reqhead + 1) % WRRN;
 		pthread_cond_signal(&ring->req_got);
 		int searchtype = wrr->searchtype;
@@ -600,6 +606,11 @@ void* WordSearcher(void* arg) {
 		pthread_cond_signal(&ring->req_got);
 	}
 	pthread_mutex_unlock(&ring->lock);
+	pthread_mutex_lock(&global_counter_lock);
+	global_perf_conter_hamming += perf_counter_hamming;
+	global_perf_conter_edit += perf_counter_edit;
+	pthread_mutex_unlock(&global_counter_lock);
+	
 }
 // Send request and possible return response.
 struct WordRequestResponse* WaitSearchWordResponse(struct WordRequestResponseRing* ring) {
@@ -778,6 +789,13 @@ void vptree_doc_worker_init() {
 #endif
 }
 
+void vptree_doc_worker_destroy() {
+	pthread_mutex_lock(&global_counter_lock);
+	global_perf_conter_hamming += perf_counter_hamming;
+	global_perf_conter_edit += perf_counter_edit;
+	pthread_mutex_unlock(&global_counter_lock);
+}
+
 void vptree_system_init() {
 	ring = new WordRequestResponseRing();
 
@@ -795,5 +813,20 @@ void vptree_system_init() {
 }
 
 void vptree_system_destroy() {
+	pthread_mutex_lock(&ring->lock);
+	ring->reqhead = 0;
+	ring->reqtail = word_searcher_n;
+	for (int i = 0; i < word_searcher_n; i++) {
+		ring->req[i] = NULL;
+	}
+	pthread_cond_broadcast(&ring->new_req);
+	pthread_mutex_unlock(&ring->lock);
+
+	for (int i = 0; i < word_searcher_n; i++) {
+		pthread_join(ring->pts[i], NULL);
+	}
+	fprintf(stderr, "global_perf_conter_hamming = %d\n", global_perf_conter_hamming);
+	fprintf(stderr, "global_perf_conter_edit = %d\n", global_perf_conter_edit);
+
 	delete ring;
 }
