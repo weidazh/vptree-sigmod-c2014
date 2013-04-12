@@ -29,7 +29,7 @@ static int perf_counter_edit = 0;
 int hamming(const std::string& a, const std::string& b) {
 	unsigned int oo = 0x7FFFFFFF;
 	unsigned int dist = HammingDistance(a.c_str(), a.length(), b.c_str(), b.length());
-	perf_counter_hamming += 1;
+	// perf_counter_hamming += 1;
 	if (dist == oo) {
 		return oo - TAU;
 	}
@@ -39,7 +39,7 @@ int hamming(const std::string& a, const std::string& b) {
 int edit(const std::string& a, const std::string& b) {
 	unsigned int oo = 0x7FFFFFFF;
 	unsigned int dist = EditDistance(a.c_str(), a.length(), b.c_str(), b.length());
-	perf_counter_edit += 1;
+	// perf_counter_edit += 1;
 	if (dist == oo) {
 		return oo - TAU;
 	}
@@ -69,10 +69,11 @@ public:
 	}
 };
 
-pthread_mutex_t max_word_id_lock = PTHREAD_MUTEX_INITIALIZER;
-static int max_word_id = 0;
+// pthread_mutex_t max_word_id_lock = PTHREAD_MUTEX_INITIALIZER;
+// static int max_word_id = 0;
 
 pthread_rwlock_t wordLock = PTHREAD_RWLOCK_INITIALIZER;
+__thread int thread_max_word_id = 0;
 class Word {
 	std::string word;
 	int hamming_queries;
@@ -84,10 +85,10 @@ public:
 	Word(std::string word)
 		: word(word), hamming_queries(0), edit_queries(0), first_word_queries() {
 
-		pthread_mutex_lock(&max_word_id_lock);
-		word_id = max_word_id;
-		max_word_id += 1;
-		pthread_mutex_unlock(&max_word_id_lock);
+		// pthread_mutex_lock(&max_word_id_lock);
+		word_id = thread_max_word_id * THREAD_N + thread_id;
+		thread_max_word_id += 1;
+		// pthread_mutex_unlock(&max_word_id_lock);
 	}
 	void push_query(QueryID q, bool first, MatchType match_type) {
 		pthread_rwlock_wrlock(&wordLock);
@@ -198,8 +199,15 @@ int old_perf_edit;
 static void new_vptrees_unless_exists() {
 	std::vector<std::string> hammingWordList;
 	std::vector<std::string> editWordList;
-	pthread_rwlock_wrlock(&vpTreeLock);
+	pthread_rwlock_rdlock(&vpTreeLock);
 	if (! hamming_vptree) {
+		pthread_rwlock_unlock(&vpTreeLock);
+
+		pthread_rwlock_wrlock(&vpTreeLock);
+		if (hamming_vptree) {
+			pthread_rwlock_unlock(&vpTreeLock);
+			return;
+		}
 		long long start = GetClockTimeInUS();
 		hamming_vptree = new HammingVpTree();
 		edit_vptree = new EditVpTree();
@@ -250,8 +258,14 @@ static void new_vptrees_unless_exists() {
 }
 
 static void clear_vptrees() {
-	pthread_rwlock_wrlock(&vpTreeLock);
+	pthread_rwlock_rdlock(&vpTreeLock);
 	if (hamming_vptree) {
+		pthread_rwlock_unlock(&vpTreeLock);
+		pthread_rwlock_wrlock(&vpTreeLock);
+		if (! hamming_vptree) {
+			pthread_rwlock_unlock(&vpTreeLock);
+			return;
+		}
 		stats.total_parallel += GetClockTimeInUS() - stats.start_parallel;
 		stats.start_indexing_and_query_adding = GetClockTimeInUS();
 		delete hamming_vptree;
@@ -476,7 +490,9 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 			for (int i = 0; i< TAU; i++)
 				rs->results_edit[i] = do_union_y(&results[i]);
 
+#if ENABLE_RESULT_CACHE
 			threadResultCache->insert(std::pair<std::string, ResultSet*>(doc_word_string, rs));
+#endif
 		}
 		else {
 			rs = foundResult;
@@ -515,5 +531,7 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 }
 
 void vptree_thread_init() {
+#if ENABLE_RESULT_CACHE
 	threadResultCache = &__threadResultCache[thread_id];
+#endif
 }
