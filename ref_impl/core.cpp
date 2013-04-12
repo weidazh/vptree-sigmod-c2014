@@ -36,7 +36,12 @@
 #include "common.h"
 using namespace std;
 
+// Threads to alloc
 #define THREAD_N 4
+// Threads to create
+int thread_n = THREAD_N;
+// Then `Threads create' is threadsPool.n
+
 #define INVALID_DOC_ID 0
 #define thread_fprintf(...)
 // #define thread_fprintf fprintf
@@ -179,6 +184,11 @@ int CreateThread();
 void KillThreads();
 
 ErrorCode InitializeIndex(){
+	char* env_thread_n;
+	if ((env_thread_n = getenv("THREAD_N")) != NULL) {
+		thread_n = atoi(env_thread_n);
+	}
+	fprintf(stderr, "thread_n = %d\n", thread_n);
 	threadsPool.n = 0;
 	pthread_mutex_init(&threadsPool.lock, NULL);
 	pthread_cond_init(&threadsPool.cond, NULL);
@@ -208,26 +218,26 @@ ErrorCode DestroyIndex(){
 	fprintf(stderr, SHOW_STATS(stats.total_indexing));
 	fprintf(stderr, SHOW_STATS(stats.total_indexing_and_query_adding));
 
-        if (THREAD_N != 1) {
+	if (threadsPool.n != 1) {
 		double parallel = stats.total_parallel
-		                   + stats.total_indexing_and_query_adding;
+				+ stats.total_indexing_and_query_adding;
 		// double parallel_ut = stats.total_parallel_user_time
 		//                    + stats.total_indexing_and_query_adding;
-		double parallel_ut = 63e6;
-		double P_estimated = (parallel / parallel_ut - 1.0) /
-				     (1.0 / THREAD_N - 1.0);
+		double parallel_ut = 32.3717e6;
+		double P_estimated = (parallel / parallel_ut - 1.0) / (1.0 / threadsPool.n - 1.0);
 		double speedup_12 = 1.0 / (1.0 - P_estimated) + (P_estimated / 12.0);
 		double speedup_24 = 1.0 / (1.0 - P_estimated) + (P_estimated / 24.0);
 		fprintf(stderr, "According Amdahl's law,\n");
 		fprintf(stderr, "P_estimated is the portion that is parallel\n");
 		fprintf(stderr, "P_estimated = %.4f\n", P_estimated);
 		fprintf(stderr, "Expected speedup,time in 12 cores: %.1f, %.1f\n",
-		                speedup_12, parallel_ut /1e6 / speedup_12);
+				speedup_12, parallel_ut /1e6 / speedup_12);
 		fprintf(stderr, "Expected speedup,time in 24 cores: %.1f, %.1f\n",
-		                speedup_24, parallel_ut /1e6 / speedup_24);
+				speedup_24, parallel_ut /1e6 / speedup_24);
 	}
 	else {
-		double single_thread = 61.5e6 - stats.total_indexing;
+		double single_thread = stats.total_parallel
+				+ stats.total_indexing_and_query_adding;
 		fprintf(stderr, "Single thread, this portion runs %.4f s\n", single_thread / 1e6);
 	}
 	KillThreads();
@@ -339,7 +349,7 @@ int CreateThread() {
 	int ret_val;
 	int n = threadsPool.n;
 
-	if (n >= THREAD_N)
+	if (n >= thread_n)
 		return -1;
 
 	pthread_mutex_init(&threadsPool.rr[n].lock, NULL);
@@ -395,13 +405,13 @@ void KillThreads() {
 	int n;
 	void* ret_val;
 
-	for(i = 0; i < THREAD_N; i++) {
+	for(i = 0; i < threadsPool.n; i++) {
 		n = FindThreadAndMoveBack(1);
 		threadsPool.rr[n].finishing = 1;
 		pthread_cond_signal(&threadsPool.rr[n].cond);
 		pthread_mutex_unlock(&threadsPool.rr[n].lock);
 	}
-	for(i = 0; i < THREAD_N; i++) {
+	for(i = 0; i < threadsPool.n; i++) {
 		pthread_join(threadsPool.pt[i], &ret_val);
 	}
 }
