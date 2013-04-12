@@ -188,6 +188,10 @@ ErrorCode InitializeIndex(){
 		thread_n = atoi(env_thread_n);
 	}
 	fprintf(stderr, "thread_n = %d\n", thread_n);
+	if (thread_n > THREAD_N) {
+		fprintf(stderr, "thread_n > THREAD_N\n");
+		exit(1);
+	}
 	threadsPool.n = 0;
 	pthread_mutex_init(&threadsPool.lock, NULL);
 	pthread_cond_init(&threadsPool.cond, NULL);
@@ -220,7 +224,9 @@ ErrorCode DestroyIndex(){
 	if (threadsPool.n != 1) {
 		double parallel = stats.total_parallel
 				+ stats.total_indexing_and_query_adding;
-		double parallel_ut = 32.3717e6; // ENABLE_RESULT_CACHE
+
+		double parallel_ut = 28.9321e6; // Gideon II single thread, Thread Result Cache
+		// double parallel_ut = 32.3717e6; // ENABLE_RESULT_CACHE
 		// double parallel_ut = 54.3972e6; // ! ENABLE_RESULT_CACHE
 		double P_estimated = (parallel / parallel_ut - 1.0) / (1.0 / threadsPool.n - 1.0);
 		double speedup_12 = 1.0 / (1.0 - P_estimated) + (P_estimated / 12.0);
@@ -239,6 +245,7 @@ ErrorCode DestroyIndex(){
 		fprintf(stderr, "Single thread, this portion runs %.4f s\n", single_thread / 1e6);
 	}
 	KillThreads();
+	vptree_thread_destroy();
 	return EC_SUCCESS;
 }
 
@@ -458,7 +465,7 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 	int Q[THREAD_N];
 	// Get the first undeliverd resuilt from "docs" and return it
 	if (docs.size() == 0 && threadsPool.in_flight) {
-		long long start = GetClockTimeInUS()
+		long long start = GetClockTimeInUS();
 		thread_fprintf(stderr, "threadsPool.in_flight = %d\n", threadsPool.in_flight);
 		n = 0;
 		for (i = 0; i < threadsPool.in_flight; i++) {
