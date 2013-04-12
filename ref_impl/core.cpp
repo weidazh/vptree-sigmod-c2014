@@ -40,6 +40,7 @@ using namespace std;
 int doc_worker_n = DOC_WORKER_N;
 __thread int thread_id;
 __thread int thread_type;
+__thread long long thread_total_resultmerging;
 // Then `Threads create' is threadsPool.n
 
 #define INVALID_DOC_ID 0
@@ -218,12 +219,16 @@ ErrorCode InitializeIndex(){
 			total_what % 1000000LL
 
 ErrorCode DestroyIndex(){
+	KillThreads();
+	vptree_system_destroy();
+
 	stats.total_parallel += GetClockTimeInUS() - stats.start_parallel;
 	fprintf(stderr, SHOW_STATS(stats.total_wait));
 	fprintf(stderr, SHOW_STATS(stats.total_serial));
 	fprintf(stderr, SHOW_STATS(stats.total_parallel));
 	fprintf(stderr, SHOW_STATS(stats.total_indexing));
 	fprintf(stderr, SHOW_STATS(stats.total_indexing_and_query_adding));
+	fprintf(stderr, SHOW_STATS(stats.total_resultmerging));
 
 	if (threadsPool.n != 1) {
 		double parallel = stats.total_parallel
@@ -248,8 +253,6 @@ ErrorCode DestroyIndex(){
 				+ stats.total_indexing_and_query_adding;
 		fprintf(stderr, "Single thread, this portion runs %.4f s\n", single_thread / 1e6);
 	}
-	KillThreads();
-	vptree_system_destroy();
 	return EC_SUCCESS;
 }
 
@@ -349,6 +352,9 @@ void* MTWorker(void* arg) {
 		pthread_mutex_unlock(&threadsPool.lock);
 	}
 	pthread_mutex_unlock(&rr->lock);
+	pthread_mutex_lock(&threadsPool.lock);
+	stats.total_resultmerging += thread_total_resultmerging;
+	pthread_mutex_unlock(&threadsPool.lock);
 	pthread_exit(NULL);
 	return 0;
 }

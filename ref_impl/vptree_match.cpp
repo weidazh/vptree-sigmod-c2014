@@ -708,6 +708,7 @@ resend_the_request:
 		if (request)
 			goto resend_the_request;
 	}
+	long long start = GetClockTimeInUS();
 	// fprintf(stdout, "searching doc %d hamming/edit = %d/%d\n", doc_id, perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
 #if ENABLE_RESULT_CACHE
 #if ENABLE_GLOBAL_RESULT_CACHE
@@ -731,6 +732,8 @@ resend_the_request:
 
 	// performace: change iterator to const_iterator if possible.
 	std::sort(query_ids.begin(), query_ids.end());
+
+	thread_total_resultmerging += GetClockTimeInUS() - start;
 
 	return EC_SUCCESS;
 }

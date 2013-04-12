@@ -18,7 +18,9 @@ struct stats {
 	long long total_indexing;
 	long long start_indexing_and_query_adding;
 	long long total_indexing_and_query_adding;
+	long long total_resultmerging;
 };
+extern __thread long long thread_total_resultmerging;
 
 extern struct stats stats;
 #define MASTER_THREAD 1
