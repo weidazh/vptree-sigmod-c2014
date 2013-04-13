@@ -27,7 +27,7 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 #define ENABLE_THREAD_RESULT_CACHE 0
 #define ENABLE_GLOBAL_RESULT_CACHE 1
 
-#define ENABLE_MULTI_EDITVPTREE 1
+#define ENABLE_MULTI_EDITVPTREE 0
 
 typedef long WordIDType;
 #define MAX_INTEGER 0x7fffffff
@@ -89,14 +89,16 @@ public:
 __thread WordIDType thread_max_word_id = 0;
 class Word {
 	std::string word;
+	// int hamming_queries[TAU];
 	int hamming_queries;
-	int edit_queries;
+	int edit_queries[TAU];
 	std::set<QueryID> first_word_queries;
 	WordIDType word_id;
 
 public:
 	Word(std::string word)
-		: word(word), hamming_queries(0), edit_queries(0), first_word_queries() {
+		: word(word), hamming_queries(0), first_word_queries() {
+		memset(edit_queries, 0, sizeof(edit_queries));
 
 		// pthread_mutex_lock(&max_word_id_lock);
 #if 0
@@ -111,24 +113,25 @@ public:
 		thread_max_word_id += 1;
 		// pthread_mutex_unlock(&max_word_id_lock);
 	}
-	void push_query(QueryID q, bool first, MatchType match_type) {
+	void push_query(QueryID q, bool first, MatchType match_type, unsigned int match_dist) {
 		// pthread_rwlock_wrlock(&wordLock);
 		ASSERT_THREAD(MASTER_THREAD, 0);
 		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
 			this->hamming_queries += 1;
+			// this->hamming_queries[match_dist] += 1;
 		if (match_type == MT_EDIT_DIST)
-			this->edit_queries += 1;
+			this->edit_queries[match_dist] += 1;
 		if (first)
 			this->first_word_queries.insert(q);
 		// pthread_rwlock_unlock(&wordLock);
 	}
-	void remove_query(QueryID q, MatchType match_type) {
+	void remove_query(QueryID q, MatchType match_type, unsigned int match_dist) {
 		// pthread_rwlock_wrlock(&wordLock);
 		ASSERT_THREAD(MASTER_THREAD, 0);
 		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
 			this->hamming_queries -= 1;
 		if (match_type == MT_EDIT_DIST)
-			this->edit_queries -= 1;
+			this->edit_queries[match_dist] -= 1;
 		// pthread_rwlock_unlock(&wordLock);
 	}
 	void remove_first_word_query(QueryID q) {
@@ -147,13 +150,22 @@ public:
 		return word_id;
 	}
 	bool empty() const {
-		return this->hamming_queries == 0 && this->edit_queries == 0;
+		if (hasHamming())
+			return false;
+		return !hasEdit();
 	}
 	bool hasHamming() const {
 		return !! this->hamming_queries;
 	}
 	bool hasEdit() const {
-		return !! this->edit_queries;
+		for (int i = 1; i < TAU; i++) {
+			if (this->edit_queries[i])
+				return true;
+		}
+		return false;
+	}
+	bool hasEdit(int i) const {
+		return this->edit_queries[i];
 	}
 };
 
@@ -166,7 +178,7 @@ WordMapByID wordMapByID;
 typedef VpTree<std::string, int, hamming> HammingVpTree;
 typedef VpTree<std::string, int, edit> EditVpTree;
 HammingVpTree* hamming_vptree;
-EditVpTree* edit_vptree[MAX_WORD_LENGTH + 1];
+EditVpTree* edit_vptree[TAU][MAX_WORD_LENGTH + 1];
 
 typedef std::map<QueryID, Query*> QueryMap;
 // pthread_rwlock_t queryMapLock = PTHREAD_RWLOCK_INITIALIZER;
@@ -227,14 +239,16 @@ static int new_vptrees_unless_exists() {
 		return 0;
 
 	std::vector<std::string> hammingWordList;
-	std::vector<std::string> editWordList;
+	std::vector<std::string> editWordList[TAU];
 	if (! hamming_vptree) {
 		long long start = GetClockTimeInUS();
 		long long old_perf_hamming = perf_counter_hamming;
 		long long old_perf_edit = perf_counter_edit;
 		hamming_vptree = NEW(HammingVpTree);
-		for (int i = 0; i <= MAX_WORD_LENGTH; i++) {
-			edit_vptree[i] = NEW(EditVpTree);
+		for (int ed = 1; ed < TAU; ed++) {
+			for (int i = 0; i <= MAX_WORD_LENGTH; i++) {
+				edit_vptree[ed][i] = NEW(EditVpTree);
+			}
 		}
 		// pthread_rwlock_rdlock(&wordMapLock);
 		ASSERT_PHRASE(PHRASE_INDEX);
@@ -245,28 +259,38 @@ static int new_vptrees_unless_exists() {
 
 			if (w->hasHamming())
 				hammingWordList.push_back(i->first);
-			if (w->hasEdit())
-				editWordList.push_back(i->first);
+			for (int ed = 1; ed < TAU; ed++) {
+				if (w->hasEdit(ed))
+					editWordList[ed].push_back(i->first);
+			}
 		}
 		// pthread_rwlock_unlock(&wordMapLock);
 		// fprintf(stdout, "searching hamming/edit = %d/%d\n", perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
 		// old_perf_hamming = perf_counter_hamming;
 		// old_perf_edit = perf_counter_edit;
 		hamming_vptree->create(hammingWordList);
+		for (int ed = 1; ed < TAU; ed++) {
 #if ENABLE_MULTI_EDITVPTREE
-		for (int i = 1; i <= MAX_WORD_LENGTH; i++) {
-			std::vector<std::string> editWordList2;
-			for (std::vector<std::string>::iterator j = editWordList.begin();
-				j != editWordList.end(); j++) {
-				int len = j->length();
-				if (i - TAU < len && len < i + TAU)
-					editWordList2.push_back(*j);
+			for (int i = 1; i <= MAX_WORD_LENGTH; i++) {
+				std::vector<std::string> editWordList2;
+				for (std::vector<std::string>::iterator j = editWordList[ed].begin();
+					j != editWordList[ed].end(); j++) {
+					int len = j->length();
+					if (i - TAU < len && len < i + TAU)
+						editWordList2.push_back(*j);
+				}
+				edit_vptree[ed][i]->create(editWordList2);
 			}
-			edit_vptree[i]->create(editWordList2);
-		}
 #else
-		edit_vptree[0]->create(editWordList);
+			fprintf(stderr, "building index for edit[%d]\n", ed);
+			for (std::vector<std::string>::iterator i = editWordList[ed].begin();
+					i != editWordList[ed].end(); i++) {
+				fprintf(stderr, "%s ", i->c_str());
+			}
+			fprintf(stderr, "\n");
+			edit_vptree[ed][0]->create(editWordList[ed]);
 #endif
+		}
 		// fprintf(stdout, "indexing hamming/edit = %d/%d\n", perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
 		// old_perf_hamming = perf_counter_hamming;
 		// old_perf_edit = perf_counter_edit;
@@ -314,9 +338,11 @@ static int clear_vptrees() {
 		stats.start_indexing_and_query_adding = GetClockTimeInUS();
 		DELETE(hamming_vptree);
 		hamming_vptree = NULL;
-		for (int i = 0; i <= MAX_WORD_LENGTH; i++) {
-			DELETE(edit_vptree[i]);
-			edit_vptree[i] = NULL;
+		for (int ed = 1; ed < TAU; ed ++) {
+			for (int i = 0; i <= MAX_WORD_LENGTH; i++) {
+				DELETE(edit_vptree[ed][i]);
+				edit_vptree[ed][i] = NULL;
+			}
 		}
 		return 1;
 	}
@@ -341,11 +367,11 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 		Word* word;
 		if (found != wordMap.end()) {
 			word = I2P(found->second);
-			word->push_query(query_id, first, match_type);
+			word->push_query(query_id, first, match_type, match_dist);
 		}
 		else {
 			word = NEW(Word, query_word_string);
-			word->push_query(query_id, first, match_type);
+			word->push_query(query_id, first, match_type, match_dist);
 			wordMap.insert(std::pair<std::string, Word*>(query_word_string, word));
 			wordMapByID.insert(std::pair<WordIDType, Word*>(word->id(), word));
 			// wordSet.insert(query_word_string);
@@ -390,7 +416,7 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 			continue;
 		}
 		Word* word = I2P(word_found->second);
-		word->remove_query(query_id, query->match_type);
+		word->remove_query(query_id, query->match_type, query->match_dist);
 		// BUG: if the same query appears twice in a word?
 		if (first)
 			word->remove_first_word_query(query_id);
@@ -678,32 +704,49 @@ void* WordSearcher(void* arg) {
 
 		if (1) {
 			std::vector<std::string> results[TAU];
+			for (int ed = 1; ed < TAU; ed ++) {
 #if ENABLE_MULTI_EDITVPTREE
-			int len = doc_word_string.length();
-			edit_vptree[len]->search(doc_word_string, TAU, results);
+				int len = doc_word_string.length();
+				edit_vptree[ed][len]->search(doc_word_string, ed, results);
 #else
-			edit_vptree[0]->search(doc_word_string, TAU, results);
-#endif
-			for (int i = 0; i < TAU; i++) {
-				rs->results_edit[i] = do_union_y(&results[i]);
+				edit_vptree[ed][0]->search(doc_word_string, ed, results);
+				int size = 0;
+				for (int i = 0; i < ed; i++) { size += results[i].size(); }
+				if (size) {
+					fprintf(stderr, "searching edit[%d] with %s\n",
+						ed, doc_word_string.c_str());
+					fprintf(stderr, "results = ");
+					for (int i = 0; i < ed; i++) {
+						for (std::vector<std::string>::iterator j = results[i].begin();
+								j != results[i].end();
+								j++) {
+							fprintf(stderr, "%d:%s ", i, j->c_str());
+						}
+					}
+					fprintf(stderr, "\n");
+				}
+	#endif
+				}
+				for (int i = 0; i < TAU; i++) {
+					rs->results_edit[i] = do_union_y(&results[i]);
+				}
 			}
-		}
-		wrr->rs = rs;
-#if 0
-		wrr->processed_by = thread_id;
-#endif
+			wrr->rs = rs;
+	#if 0
+			wrr->processed_by = thread_id;
+	#endif
 
-#if 0
-		WordResponseRing* respring = ring->respring[waiting_doc_worker];
-		pthread_mutex_lock(&respring->lock);
-		while ((respring->tail + 1) % RESP_N == respring->head) {
-			thread_fprintf(logf, "%d:%d waiting resp_got\n", thread_type, thread_id);
-			pthread_cond_wait(&respring->resp_got, &respring->lock);
-		}
-		respring->resp[respring->tail] = wrr;
-		respring->tail = (respring->tail + 1) % RESP_N;
-		thread_fprintf(logf, "%d:%d sending new_resp to %d\n",
-				thread_type, thread_id, waiting_doc_worker);
+	#if 0
+			WordResponseRing* respring = ring->respring[waiting_doc_worker];
+			pthread_mutex_lock(&respring->lock);
+			while ((respring->tail + 1) % RESP_N == respring->head) {
+				thread_fprintf(logf, "%d:%d waiting resp_got\n", thread_type, thread_id);
+				pthread_cond_wait(&respring->resp_got, &respring->lock);
+			}
+			respring->resp[respring->tail] = wrr;
+			respring->tail = (respring->tail + 1) % RESP_N;
+			thread_fprintf(logf, "%d:%d sending new_resp to %d\n",
+					thread_type, thread_id, waiting_doc_worker);
 		pthread_cond_signal(&respring->new_resp);
 		pthread_mutex_unlock(&respring->lock);
 #endif

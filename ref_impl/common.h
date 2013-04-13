@@ -34,7 +34,7 @@ extern FILE* logf;
 extern int doc_worker_n;
 #define WORD_SEARCHER_N 24
 extern int word_searcher_n;
-#define REQ_RING_N 12
+#define REQ_RING_N 1
 #define MAX_THREADS (1 + DOC_WORKER_N + WORD_SEARCHER_N)
 
 #define MASTER_THREAD 1

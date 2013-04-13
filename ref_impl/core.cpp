@@ -271,6 +271,9 @@ ErrorCode DestroyIndex(){
 	fprintf(logf, SHOW_STATS("enqueue", stats.total_enqueuing));
 	fprintf(logf, SHOW_STATS("wait", stats.total_wait));
 	fprintf(logf, SHOW_STATS("  words", stats.total_words_wait));
+	fprintf(logf, "    (words + enqueue) %lld.%06lld\n",
+		(stats.total_words_wait + stats.total_enqueuing)/1000000LL,
+		(stats.total_words_wait + stats.total_enqueuing)%1000000LL);
 	fprintf(logf, SHOW_STATS("  docs ", stats.total_docs_wait));
 	fprintf(logf, SHOW_STATS("    (last half)", stats.total_docs_wait_small));
 	fprintf(logf, SHOW_STATS("    merge", stats.total_resultmerging));
