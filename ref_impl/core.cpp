@@ -228,9 +228,8 @@ ErrorCode InitializeIndex(){
 	if ((env_doc_worker_n = getenv("DOC_WORKER_N")) != NULL) {
 		doc_worker_n = atoi(env_doc_worker_n);
 	}
-	fprintf(logf, "doc_worker_n = %d\n", doc_worker_n);
 	if (doc_worker_n > DOC_WORKER_N) {
-		fprintf(logf, "doc_worker_n > DOC_WORKER_N\n");
+		fprintf(logf, "doc_worker_n(%d) > DOC_WORKER_N\n", doc_worker_n);
 		exit(1);
 	}
 	threadsPool.n = 0;
@@ -240,6 +239,7 @@ ErrorCode InitializeIndex(){
 	pthread_cond_init(&threadsPool.respcond, NULL);
 
 	vptree_system_init();
+	fprintf(logf, "doc_worker_n = %d\n", doc_worker_n);
 
 	while ( CreateThread() != -1);
 	srand(time(NULL));
