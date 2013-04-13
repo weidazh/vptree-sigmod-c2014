@@ -36,9 +36,11 @@ extern int doc_worker_n;
 extern int word_searcher_n;
 #define REQ_RING_N 12
 extern int req_ring_n;
-#define REQ_ENQUEUE_BATCH 4
+#define REQ_ENQUEUE_BATCH 2
 extern int req_enqueue_batch;
 #define MAX_THREADS (1 + DOC_WORKER_N + WORD_SEARCHER_N)
+
+#define N_CORES 24
 
 #define MASTER_THREAD 1
 #define DOC_WORKER_THREAD 2

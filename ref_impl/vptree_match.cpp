@@ -880,6 +880,33 @@ int DivideFrequency(int n) {
 int GetRingIDofThread(int tid) {
 	return tid % req_ring_n;
 }
+static void StickToCores(pthread_t th, int tid) {
+	int num_cores = sysconf(_SC_NPROCESSORS_ONLN);
+	if (num_cores != N_CORES) {
+		fprintf(stderr, "num_cores != N_CORES\n");
+		exit(1);
+	}
+
+	cpu_set_t cpuset;
+	CPU_ZERO(&cpuset);
+	if (req_ring_n == 1)
+		return;
+	else if (req_ring_n == 2 || req_ring_n == 4 || req_ring_n == 8) {
+		// int topo[] = {0, 0, 0, 4, 4, 4, 1, 1, 1, 5, 5, 5, 2, 2, 2, 6, 6, 6, 3, 3, 3, 7, 7, 7};
+		int topo[] = {0, 0, 4, 2, 6, 6, 1, 1, 5, 3, 7, 7, 0, 4, 4, 2, 2, 6, 1, 5, 5, 3, 3, 7};
+		for (int i = 0; i < N_CORES; i++) {
+			if (topo[i] % req_ring_n == tid % req_ring_n) {
+				CPU_SET(i, &cpuset);
+			}
+		}
+	}
+
+	int ret = pthread_setaffinity_np(th, sizeof(cpu_set_t), &cpuset);
+	if (ret < 0) {
+		fprintf(stderr, "cannot set affinity\n");
+		exit(1);
+	}
+}
 
 void CreateWordSearchers(struct WordRequestResponseRing* ring, int n) {
 	pthread_mutex_lock(&ring->pts_lock);
@@ -896,20 +923,28 @@ void CreateWordSearchers(struct WordRequestResponseRing* ring, int n) {
 			perror("Pthread create error!");
 			exit(1);
 		}
+		StickToCores(ring->pts[ring->worker_threads], tid);
 		ring->worker_threads += 1;
 	}
 	pthread_mutex_unlock(&ring->pts_lock);
 
 }
-int GetReqringToSend() {
+static int GetReqringToSend(struct WordRequestResponse* request) {
+	return request->doc_word_string.length() % req_ring_n;
+}
+static int GetReqringToSend() {
 	static __thread int round_robin = 0;
 	round_robin = (round_robin + 1) % req_ring_n;
 	return round_robin;
 }
-struct WordRequestResponse* SendSearchWordRequest(struct WordRequestResponseRing* ring,
+static struct WordRequestResponse* SendSearchWordRequest(struct WordRequestResponseRing* ring,
 			struct WordRequestResponse* request, int must) {
 
+#if REQ_ENQUEUE_BATCH == 1
+	int reqring_id = GetReqringToSend(request);
+#else
 	int reqring_id = GetReqringToSend();
+#endif
 	WordRequestRing* reqring = ring->reqring[reqring_id];
 
 	if ((!must && pthread_mutex_trylock(&reqring->lock) == 0) ||
