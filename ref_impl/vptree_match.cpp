@@ -232,9 +232,9 @@ static int new_vptrees_unless_exists() {
 		long long start = GetClockTimeInUS();
 		long long old_perf_hamming = perf_counter_hamming;
 		long long old_perf_edit = perf_counter_edit;
-		hamming_vptree = new HammingVpTree();
+		hamming_vptree = NEW(HammingVpTree);
 		for (int i = 0; i <= MAX_WORD_LENGTH; i++) {
-			edit_vptree[i] = new EditVpTree();
+			edit_vptree[i] = NEW(EditVpTree);
 		}
 		// pthread_rwlock_rdlock(&wordMapLock);
 		ASSERT_PHRASE(PHRASE_INDEX);
@@ -325,7 +325,7 @@ static int clear_vptrees() {
 
 ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType match_type, unsigned int match_dist) {
 	clear_vptrees();
-	Query* q = new Query(query_id, query_str, match_type, match_dist);
+	Query* q = NEW(Query, query_id, query_str, match_type, match_dist);
 	ASSERT_THREAD(MASTER_THREAD, 0);
 	// pthread_rwlock_wrlock(&queryMapLock);
 	queryMap.insert(std::pair<QueryID, Query*>(query_id, q));
@@ -344,7 +344,7 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 			word->push_query(query_id, first, match_type);
 		}
 		else {
-			word = new Word(query_word_string);
+			word = NEW(Word, query_word_string);
 			word->push_query(query_id, first, match_type);
 			wordMap.insert(std::pair<std::string, Word*>(query_word_string, word));
 			wordMapByID.insert(std::pair<WordIDType, Word*>(word->id(), word));
@@ -616,11 +616,11 @@ struct WordRequestResponseRing {
 		pthread_mutex_init(&this->pts_lock, NULL);
 		pthread_mutex_init(&this->lock, NULL);
 		for (int i = 0; i < REQ_RING_N; i++)
-			reqring[i] = new WordRequestRing(i);
+			reqring[i] = NEW(WordRequestRing, i);
 		pthread_mutex_init(&resplock, NULL);
 		pthread_cond_init(&respcond, NULL);
 		// for (int i = 0; i < DOC_WORKER_N; i++)
-		// 	respring[i] = new WordResponseRing(i);
+		// 	respring[i] = NEW(WordResponseRing, i);
 	}
 };
 
@@ -660,7 +660,7 @@ void* WordSearcher(void* arg) {
 		// int waiting_doc_worker = wrr->waiting_doc_worker;
 		std::string doc_word_string = wrr->doc_word_string;
 
-		ResultSet* rs = new ResultSet();
+		ResultSet* rs = NEW(ResultSet, );
 		if (searchtype & SEARCH_HAMMING) {
 			std::vector<std::string> results[tau];
 			hamming_vptree->search(doc_word_string, tau, results);
@@ -813,7 +813,7 @@ int GetRingIDofThread(int tid) {
 void CreateWordSearchers(struct WordRequestResponseRing* ring, int n) {
 	pthread_mutex_lock(&ring->pts_lock);
 	while (ring->worker_threads < n) {
-		WordSearcherArg* arg = new WordSearcherArg();
+		WordSearcherArg* arg = NEW(WordSearcherArg, );
 		int tid = ring->worker_threads;
 		arg->tid = tid;
 		arg->ring = ring;
@@ -882,7 +882,7 @@ ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str) {
 		if (batch_doc_words.count(doc_word_string))
 			continue;
 		batch_doc_words.insert(doc_word_string);
-		WordRequestResponse* request = new WordRequestResponse();
+		WordRequestResponse* request = NEW(WordRequestResponse, );
 		// request->waiting_doc_worker = -1; // Master
 		request->doc_word_string = doc_word_string;
 		request->searchtype = SEARCH_HAMMING_EDIT;
@@ -1000,7 +1000,7 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 				fprintf(logf, "result of %s is not ready\n", doc_word_string.c_str());
 				exit(1);
 #if 0
-				request = new WordRequestResponse();
+				request = NEW(WordRequestResponse, );
 				request->waiting_doc_worker = thread_id;
 				request->doc_word_string = doc_word_string;
 				request->searchtype = SEARCH_HAMMING_EDIT;
@@ -1119,7 +1119,7 @@ void vptree_system_init() {
 		exit(1);
 	}
 
-	ring = new WordRequestResponseRing();
+	ring = NEW(WordRequestResponseRing, );
 
 	CreateWordSearchers(ring, word_searcher_n);
 }

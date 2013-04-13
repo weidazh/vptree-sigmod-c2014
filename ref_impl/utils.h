@@ -31,9 +31,14 @@ static inline void static_free(void* var) {
 #if ENABLE_STATIC_MALLOC
 #define MALLOC(size) static_malloc(size)
 #define FREE(var) static_free(var)
+#define NEW(type, ...) ({\
+		void* __mem = static_malloc(sizeof(type)); \
+		new (__mem) type(__VA_ARGS__); \
+	})
 #else
 #define MALLOC(size) malloc(size)
 #define FREE(var) free(var)
+#define NEW(type, ...) new type(__VA_ARGS__);
 #endif
 
 
@@ -44,5 +49,6 @@ static inline void static_free(void* var) {
 #else
 #define DELETE(x) (delete x)
 #endif
+
 
 #endif
