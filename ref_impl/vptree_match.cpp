@@ -9,6 +9,7 @@
 #include <set>
 #include <map>
 #include "common.h"
+#include "utils.h"
 
 #define thread_fprintf(...)
 // #define thread_fprintf fprintf
@@ -170,9 +171,9 @@ public:
 	WordIDType* results_edit[TAU];
 	~ResultSet() {
 		for(int i = 0; i < TAU; i++)
-			free(results_hamming[i]);
+			FREE(results_hamming[i]);
 		for(int i = 0; i < TAU; i++)
-			free(results_edit[i]);
+			FREE(results_edit[i]);
 	}
 };
 
@@ -268,7 +269,7 @@ static int new_vptrees_unless_exists() {
 		for(ResultCache::iterator i = resultCache.begin();
 			i != resultCache.end();
 			i++ ) {
-			delete i->second;
+			DELETE(i->second);
 		}
 		resultCache.clear();
 		pthread_rwlock_unlock(&resultCacheLock);
@@ -301,10 +302,10 @@ static int clear_vptrees() {
 		long long now = GetClockTimeInUS();
 		// fprintf(logf, "[%lld.%06lld] start of indexing\n", now / 1000000LL % 86400, now % 1000000LL);
 		stats.start_indexing_and_query_adding = GetClockTimeInUS();
-		delete hamming_vptree;
+		DELETE(hamming_vptree);
 		hamming_vptree = NULL;
 		for (int i = 0; i <= MAX_WORD_LENGTH; i++) {
-			delete edit_vptree[i];
+			DELETE(edit_vptree[i]);
 			edit_vptree[i] = NULL;
 		}
 		return 1;
@@ -387,12 +388,12 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 			wordMap.erase(word_found);
 			wordMapByID.erase(word->id());
 
-			delete word;
+			DELETE(word);
 		}
 		// pthread_rwlock_unlock(&wordMapLock);
 		first = false;
 	}
-	delete query;
+	DELETE(query);
 
 	return EC_SUCCESS;
 }
@@ -400,7 +401,7 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 typedef std::set<WordIDType> SET;
 
 static WordIDType* do_union_y(std::vector<std::string>* y) {
-	WordIDType* x = (WordIDType*)malloc(y->size() * sizeof(WordIDType) + 1);
+	WordIDType* x = (WordIDType*)MALLOC((y->size() + 1) * sizeof(WordIDType));
 	if (x == NULL) {
 		fprintf(logf, "cannot malloc\n");
 		exit(1);
@@ -619,9 +620,8 @@ void* WordSearcher(void* arg) {
 	WordSearcherArg* wordSearcher = (WordSearcherArg*)arg;
 	struct WordRequestResponseRing* ring = (struct WordRequestResponseRing*)wordSearcher->ring;
 	struct WordRequestRing* reqring = (struct WordRequestRing*)wordSearcher->reqring;
-	thread_type = WORD_SEARCHER_THREAD;
-	thread_id = wordSearcher->tid;
-	delete wordSearcher;
+	setThread(WORD_SEARCHER_THREAD, wordSearcher->tid);
+	DELETE(wordSearcher);
 	pthread_mutex_lock(&reqring->lock);
 	while (! reqring->exiting) {
 		while (reqring->head == NULL && !reqring->exiting) {
@@ -1017,7 +1017,7 @@ resend_the_request:
 #if ENABLE_RESULT_CACHE
 			threadResultCache->insert(std::pair<std::string, ResultSet*>(response->doc_word_string, rs));
 #endif
-			delete response;
+			DELETE(response);
 			response = NULL;
 		}
 #endif
@@ -1087,6 +1087,8 @@ void vptree_system_init() {
 		fprintf(logf, "    ENABLE_THREAD_RESULT_CACHE = %d\n", ENABLE_THREAD_RESULT_CACHE);
 		fprintf(logf, "    ENABLE_GLOBAL_RESULT_CACHE = %d\n", ENABLE_GLOBAL_RESULT_CACHE);
 		fprintf(logf, "    ENABLE_MULTI_EDITVPTREE    = %d\n", ENABLE_MULTI_EDITVPTREE);
+		fprintf(logf, "    ENABLE_STATIC_MALLOC       = %d\n", ENABLE_STATIC_MALLOC);
+		fprintf(logf, "    ENABLE_ALLOW_MEM_LEAK      = %d\n", ENABLE_ALLOW_MEM_LEAK);
 		fprintf(logf, "    REQ_RING_N = %d\n", REQ_RING_N);
 	}
 
@@ -1130,5 +1132,5 @@ void vptree_system_destroy() {
 	fprintf(logf, "G_index_hamming = %lld M\n", global_perf_counter_index_hamming / 1000000LL);
 	fprintf(logf, "G_index_edit = %lld M\n", global_perf_counter_index_edit / 1000000LL);
 
-	delete ring;
+	DELETE(ring);
 }

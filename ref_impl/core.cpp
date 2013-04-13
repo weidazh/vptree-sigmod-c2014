@@ -34,12 +34,14 @@
 #include <ctime>
 #include <pthread.h>
 #include "common.h"
+#include "utils.h"
 using namespace std;
 
 // Threads to create
 int doc_worker_n = DOC_WORKER_N;
 __thread int thread_id;
 __thread int thread_type;
+__thread int thread_sid;
 __thread long long thread_total_resultmerging;
 int phrase;
 int n_phrases = 0;
@@ -139,6 +141,7 @@ struct DocumentResults
 	DocumentResults(DocID doc_id, std::vector<QueryID> query_ids):
 		doc_id(doc_id),
 		num_res(query_ids.size()) {
+		/* Only this case I use malloc, because the driver will free it */
 		QueryID* p = (QueryID*) malloc(num_res * sizeof(QueryID));
 		this->query_ids = p;
 		for (std::vector<QueryID>::iterator i = query_ids.begin();
@@ -213,8 +216,7 @@ void setPhrase(int phrase_to_be) {
 }
 
 ErrorCode InitializeIndex(){
-	thread_type = MASTER_THREAD;
-	thread_id = 0;
+	setThread(MASTER_THREAD, 0);
 	if (strcmp(getenv("HOSTNAME"), "sg010") == 0) {
 		hku = 1;
 		logf = stderr;
@@ -336,10 +338,9 @@ void* MTWorker(void* arg) {
 	struct MTWorkerArg* MTWorkerArg = (struct MTWorkerArg*) arg;
 	int tid = MTWorkerArg->tid;
 	struct ThreadsPool* rr = &threadsPool;
-	delete MTWorkerArg;
+	DELETE(MTWorkerArg);
 
-	thread_type = DOC_WORKER_THREAD;
-	thread_id = tid;
+	setThread(DOC_WORKER_THREAD, tid);
 
 	thread_fprintf(logf, "MTWorker[%d] starting\n", tid);
 	vptree_doc_worker_init();
@@ -455,7 +456,7 @@ int FindThreadAndMoveBack(int reset_available) {
 	if (threadsPool.rr[n].doc_result) {
 		docs.push_back(threadsPool.rr[n].doc_result);
 		threadsPool.rr[n].doc_result = NULL;
-		free(threadsPool.rr[n].doc_str);
+		FREE(threadsPool.rr[n].doc_str);
 	}
 	return n;
 }
@@ -474,7 +475,7 @@ void KillThreads() {
 
 ErrorCode MTVPTreeMatchDocument(DocID doc_id, const char* doc_str)
 {
-	char* cur_doc_str = (char*) malloc(strlen(doc_str) + 1);
+	char* cur_doc_str = (char*) MALLOC(strlen(doc_str) + 1);
 	strcpy(cur_doc_str, doc_str); // FIXME: Who is freeing it?
 
 	VPTreeMasterMatchDocument(doc_id, doc_str);
@@ -596,7 +597,8 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 		*p_doc_id = doc->doc_id;
 		*p_num_res = doc->num_res;
 		*p_query_ids = doc->query_ids;
-		delete doc;
+		// delete doc;
+		DELETE(doc);
 		if (threadsPool.in_flight == 0)
 			stats.start_serial = GetClockTimeInUS();
 		return EC_SUCCESS;

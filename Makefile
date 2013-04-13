@@ -29,7 +29,8 @@
 
 # Build targets (your implementation targets should go in IMPL_O)
 TEST_O=test_driver/test.o 
-IMPL_O=ref_impl/core.o ref_impl/vptree_match.o
+IMPL_O=ref_impl/core.o ref_impl/vptree_match.o ref_impl/utils.o
+HEADERS = ref_impl/common.h ref_impl/utils.h ref_impl/vptree.h ref_impl/vptree_match.h
 
 GPROF := n
 
