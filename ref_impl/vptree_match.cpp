@@ -23,15 +23,15 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 #define I2P(x) (&(*(x)))
 
 #define ENABLE_RESULT_CACHE 1
-#define ENABLE_GLOBAL_RESULT_CACHE 0
+#define ENABLE_GLOBAL_RESULT_CACHE 1
 
 #define ENABLE_MULTI_EDITVPTREE 1
 
-static __thread int perf_counter_hamming = 0;
-static __thread int perf_counter_edit = 0;
+static __thread long perf_counter_hamming = 0;
+static __thread long perf_counter_edit = 0;
 pthread_mutex_t global_counter_lock = PTHREAD_MUTEX_INITIALIZER;
-int global_perf_conter_hamming = 0;
-int global_perf_conter_edit = 0;
+long global_perf_couter_hamming = 0;
+long global_perf_couter_edit = 0;
 // must be int
 int hamming(const std::string& a, const std::string& b) {
 	unsigned int oo = 0x7FFFFFFF;
@@ -274,6 +274,7 @@ static void new_vptrees_unless_exists() {
 		stats.total_indexing += end - start;
 		stats.total_indexing_and_query_adding = GetClockTimeInUS() - stats.start_indexing_and_query_adding;
 		stats.start_parallel = GetClockTimeInUS();
+		fprintf(stderr, "[%lld.%06lld] end of indexing\n", end / 1000000LL % 86400, end % 1000000LL);
 
 	}
 	pthread_rwlock_unlock(&vpTreeLock);
@@ -288,6 +289,8 @@ static void clear_vptrees() {
 			pthread_rwlock_unlock(&vpTreeLock);
 			return;
 		}
+		long long now = GetClockTimeInUS();
+		fprintf(stderr, "[%lld.%06lld] start of indexing\n", now / 1000000LL % 86400, now % 1000000LL);
 		stats.total_parallel += GetClockTimeInUS() - stats.start_parallel;
 		stats.start_indexing_and_query_adding = GetClockTimeInUS();
 		delete hamming_vptree;
@@ -626,9 +629,11 @@ void* WordSearcher(void* arg) {
 	}
 	pthread_mutex_unlock(&reqring->lock);
 	pthread_mutex_lock(&global_counter_lock);
-	global_perf_conter_hamming += perf_counter_hamming;
-	global_perf_conter_edit += perf_counter_edit;
+	global_perf_couter_hamming += perf_counter_hamming;
+	global_perf_couter_edit += perf_counter_edit;
 	pthread_mutex_unlock(&global_counter_lock);
+	perf_counter_hamming = 0;
+	perf_counter_edit = 0;
 	pthread_exit(NULL);
 	return NULL;
 }
@@ -893,8 +898,8 @@ void vptree_doc_worker_init() {
 
 void vptree_doc_worker_destroy() {
 	pthread_mutex_lock(&global_counter_lock);
-	global_perf_conter_hamming += perf_counter_hamming;
-	global_perf_conter_edit += perf_counter_edit;
+	global_perf_couter_hamming += perf_counter_hamming;
+	global_perf_couter_edit += perf_counter_edit;
 	pthread_mutex_unlock(&global_counter_lock);
 }
 
@@ -932,8 +937,8 @@ void vptree_system_destroy() {
 	for (int i = 0; i < word_searcher_n; i++) {
 		pthread_join(ring->pts[i], NULL);
 	}
-	fprintf(stderr, "global_perf_conter_hamming = %d\n", global_perf_conter_hamming);
-	fprintf(stderr, "global_perf_conter_edit = %d\n", global_perf_conter_edit);
+	fprintf(stderr, "global_perf_couter_hamming = %ld\n", global_perf_couter_hamming);
+	fprintf(stderr, "global_perf_couter_edit = %ld\n", global_perf_couter_edit);
 
 	delete ring;
 }
