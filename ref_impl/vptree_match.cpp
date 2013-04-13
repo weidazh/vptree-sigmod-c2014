@@ -528,14 +528,18 @@ ResultSet* findCachedResult(std::string doc_word_string) {
 
 struct WordRequestResponse {
 	std::string doc_word_string;
+#if 0
 #define SEARCH_HAMMING      1
 #define SEARCH_EDIT         2
 #define SEARCH_HAMMING_EDIT 3
 	int searchtype; // 1 for hamming, 2 for edit; 3 for hamming+edit
 	int tau; // TAU
+#endif
 	ResultSet* rs;
 	// int waiting_doc_worker;
+#if 0
 	int processed_by;
+#endif
 
 	struct WordRequestResponse* next;
 	struct WordRequestResponse* resp_next;
@@ -651,39 +655,43 @@ void* WordSearcher(void* arg) {
 			reqring->tail = NULL;
 		pthread_mutex_unlock(&reqring->lock);
 
+#if 0
 		int searchtype = wrr->searchtype;
 		int tau = wrr->tau;
 		if (tau != TAU) {
 			fprintf(logf, "tau(%d) != TAU(%d)\n", tau, TAU);
 			exit(1);
 		}
+#endif
 		// int waiting_doc_worker = wrr->waiting_doc_worker;
 		std::string doc_word_string = wrr->doc_word_string;
 
 		ResultSet* rs = NEW(ResultSet, );
-		if (searchtype & SEARCH_HAMMING) {
-			std::vector<std::string> results[tau];
-			hamming_vptree->search(doc_word_string, tau, results);
-			for (int i = 0; i < tau; i++) {
+		if (1) {
+			std::vector<std::string> results[TAU];
+			hamming_vptree->search(doc_word_string, TAU, results);
+			for (int i = 0; i < TAU; i++) {
 				rs->results_hamming[i] = do_union_y(&results[i]);
 			}
 		}
 		thread_fprintf(logf, "%d:%d got new_req\n", thread_type, thread_id);
 
-		if (searchtype & SEARCH_EDIT) {
-			std::vector<std::string> results[tau];
+		if (1) {
+			std::vector<std::string> results[TAU];
 #if ENABLE_MULTI_EDITVPTREE
 			int len = doc_word_string.length();
-			edit_vptree[len]->search(doc_word_string, tau, results);
+			edit_vptree[len]->search(doc_word_string, TAU, results);
 #else
-			edit_vptree[0]->search(doc_word_string, tau, results);
+			edit_vptree[0]->search(doc_word_string, TAU, results);
 #endif
-			for (int i = 0; i < tau; i++) {
+			for (int i = 0; i < TAU; i++) {
 				rs->results_edit[i] = do_union_y(&results[i]);
 			}
 		}
 		wrr->rs = rs;
+#if 0
 		wrr->processed_by = thread_id;
+#endif
 
 #if 0
 		WordResponseRing* respring = ring->respring[waiting_doc_worker];
@@ -885,8 +893,10 @@ ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str) {
 		WordRequestResponse* request = NEW(WordRequestResponse, );
 		// request->waiting_doc_worker = -1; // Master
 		request->doc_word_string = doc_word_string;
+#if 0
 		request->searchtype = SEARCH_HAMMING_EDIT;
 		request->tau = TAU;
+#endif
 		request->rs = NULL;
 		request->next = last_req;
 		request->resp_next = NULL;
