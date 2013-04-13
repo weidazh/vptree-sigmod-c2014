@@ -28,6 +28,8 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 
 #define ENABLE_MULTI_EDITVPTREE 0
 
+typedef long WordIDType;
+#define MAX_INTEGER 0x7fffffff
 static __thread long perf_counter_hamming = 0;
 static __thread long perf_counter_edit = 0;
 pthread_mutex_t global_counter_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -58,7 +60,7 @@ class Query {
 private:
 	char query_str[MAX_QUERY_LENGTH];
 public:
-	int word_ids[MAX_QUERY_WORDS];
+	WordIDType word_ids[MAX_QUERY_WORDS];
 	QueryID query_id;
 	MatchType match_type;
 	unsigned int match_dist;
@@ -78,16 +80,16 @@ public:
 };
 
 // pthread_mutex_t max_word_id_lock = PTHREAD_MUTEX_INITIALIZER;
-// static int max_word_id = 0;
+// static WordIDType max_word_id = 0;
 
 pthread_rwlock_t wordLock = PTHREAD_RWLOCK_INITIALIZER;
-__thread int thread_max_word_id = 0;
+__thread WordIDType thread_max_word_id = 0;
 class Word {
 	std::string word;
 	int hamming_queries;
 	int edit_queries;
 	std::set<QueryID> first_word_queries;
-	int word_id;
+	WordIDType word_id;
 
 public:
 	Word(std::string word)
@@ -95,6 +97,9 @@ public:
 
 		// pthread_mutex_lock(&max_word_id_lock);
 		word_id = thread_max_word_id * DOC_WORKER_N + thread_id;
+		if (word_id > MAX_INTEGER) {
+			fprintf(stderr, "Yes, you should not use int as WordIDType\n");
+		}
 		thread_max_word_id += 1;
 		// pthread_mutex_unlock(&max_word_id_lock);
 	}
@@ -127,7 +132,7 @@ public:
 	std::set<QueryID>::iterator end() const{
 		return first_word_queries.end();
 	}
-	int id() const {
+	WordIDType id() const {
 		return word_id;
 	}
 	bool empty() const {
@@ -142,7 +147,7 @@ public:
 };
 
 typedef std::map<std::string, Word*> WordMap;
-typedef std::map<int, Word*> WordMapByID;
+typedef std::map<WordIDType, Word*> WordMapByID;
 pthread_rwlock_t wordMapLock = PTHREAD_RWLOCK_INITIALIZER;
 WordMap wordMap;
 WordMapByID wordMapByID;
@@ -160,8 +165,8 @@ QueryMap queryMap;
 
 class ResultSet {
 public:
-	int* results_hamming[TAU];
-	int* results_edit[TAU];
+	WordIDType* results_hamming[TAU];
+	WordIDType* results_edit[TAU];
 	~ResultSet() {
 		for(int i = 0; i < TAU; i++)
 			free(results_hamming[i]);
@@ -333,7 +338,7 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 			word = new Word(query_word_string);
 			word->push_query(query_id, first, match_type);
 			wordMap.insert(std::pair<std::string, Word*>(query_word_string, word));
-			wordMapByID.insert(std::pair<int, Word*>(word->id(), word));
+			wordMapByID.insert(std::pair<WordIDType, Word*>(word->id(), word));
 			// wordSet.insert(query_word_string);
 		}
 		pthread_rwlock_unlock(&wordMapLock);
@@ -393,10 +398,14 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 	return EC_SUCCESS;
 }
 
-typedef std::set<int> SET;
+typedef std::set<WordIDType> SET;
 
-static int* do_union_y(std::vector<std::string>* y) {
-	int* x = (int*)malloc(y->size() * sizeof(int) + 1);
+static WordIDType* do_union_y(std::vector<std::string>* y) {
+	WordIDType* x = (WordIDType*)malloc(y->size() * sizeof(WordIDType) + 1);
+	if (x == NULL) {
+		fprintf(stderr, "cannot malloc\n");
+		exit(1);
+	}
 	int j = 0;
 	// pthread_rwlock_rdlock(&wordMapLock);
 	for(std::vector<std::string>::iterator i = y->begin();
@@ -411,13 +420,13 @@ static int* do_union_y(std::vector<std::string>* y) {
 	return x;
 }
 
-static void do_union(SET* x, int** y) {
-	for(int* p = *y; *p >=0; p++) {
+static void do_union_INT(SET* x, WordIDType* y) {
+	for(WordIDType* p = y; *p >= 0; p++) {
 		x->insert(*p);
 	}
 }
 
-static void do_union(SET* x, SET* y) {
+static void do_union_SET(SET* x, SET* y) {
 	for(SET::iterator i = y->begin();
 		i != y->end();
 		i++) {
@@ -445,7 +454,7 @@ void words_to_queries(SET* matchedHammingWords, SET* matchedEditWords, std::vect
 			Query* query = I2P(queryMap.find(query_id)->second);
 			// pthread_rwlock_unlock(&queryMapLock);
 			for (int j = 0; j < MAX_QUERY_WORDS && query->word_ids[j] != -1; j++) {
-				int id = query->word_ids[j];
+				WordIDType id = query->word_ids[j];
 				// if query is hamming
 				if ((query->match_type == MT_EXACT_MATCH &&
 					! matchedHammingWords[0].count(id)) ||
@@ -472,8 +481,10 @@ ResultSet* findCachedResult(std::string doc_word_string) {
 	ResultCache::iterator found;
 #if ENABLE_THREAD_RESULT_CACHE
 	found = threadResultCache->find(doc_word_string);
-	if(found != threadResultCache->end())
-		return found->second;
+	if(found != threadResultCache->end()) {
+		rs = found->second;
+		return rs;
+	}
 #endif
 #if ENABLE_GLOBAL_RESULT_CACHE
 	pthread_rwlock_rdlock(&resultCacheLock);
@@ -483,6 +494,18 @@ ResultSet* findCachedResult(std::string doc_word_string) {
 		rs = found->second;
 	}
 	pthread_rwlock_unlock(&resultCacheLock);
+
+#if 0
+	for (int i = 0; rs && i < TAU; i++) {
+		unsigned long hex = (long)rs->results_hamming[i];
+		if ((hex > 0x10000000 && ((hex & 0xffffffff00000000LL) != 0x2aaa00000000))) {
+			fprintf(stderr, "doc_word_string=[%s]\n", doc_word_string.c_str());
+			int tryc = rs->results_hamming[i][0];
+			fprintf(stderr, "rs->results_hamming[%d] too big %p, %d\n", i,
+					rs->results_hamming[i], tryc);
+		}
+	}
+#endif
 #endif
 #endif
 	return rs;
@@ -582,6 +605,8 @@ struct WordRequestResponseRing {
 		pthread_mutex_init(&this->lock, NULL);
 		for (int i = 0; i < REQ_RING_N; i++)
 			reqring[i] = new WordRequestRing(i);
+		pthread_mutex_init(&resplock, NULL);
+		pthread_cond_init(&respcond, NULL);
 		// for (int i = 0; i < DOC_WORKER_N; i++)
 		// 	respring[i] = new WordResponseRing(i);
 	}
@@ -617,6 +642,10 @@ void* WordSearcher(void* arg) {
 
 		int searchtype = wrr->searchtype;
 		int tau = wrr->tau;
+		if (tau != TAU) {
+			fprintf(stderr, "tau(%d) != TAU(%d)\n", tau, TAU);
+			exit(1);
+		}
 		// int waiting_doc_worker = wrr->waiting_doc_worker;
 		std::string doc_word_string = wrr->doc_word_string;
 
@@ -664,6 +693,7 @@ void* WordSearcher(void* arg) {
 
 		/* Only notify when req is not pending */
 		if (reqring->head == reqring->tail) {
+			// fprintf(stderr, "signaling respcond of %s\n", doc_word_string.c_str());
 			pthread_mutex_lock(&ring->resplock);
 			pthread_cond_signal(&ring->respcond);
 			pthread_mutex_unlock(&ring->resplock);
@@ -836,6 +866,7 @@ ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str) {
 		request->doc_word_string = doc_word_string;
 		request->searchtype = SEARCH_HAMMING_EDIT;
 		request->tau = TAU;
+		request->rs = NULL;
 		request->next = last_req;
 		request->resp_next = NULL;
 
@@ -868,19 +899,34 @@ void WaitWordResults() {
 	while (ring->resphead) {
 		while (ring->resphead &&
 			ring->resphead->rs == NULL) {
-			fprintf(stderr, "waiting for respcond of %s\n", ring->resphead->doc_word_string.c_str());
+			// fprintf(stderr, "waiting for respcond of %s\n", ring->resphead->doc_word_string.c_str());
 			pthread_cond_wait(&ring->respcond, &ring->resplock);
 		}
+		if (!ring->resphead)
+			break;
 		WordRequestResponse* response = ring->resphead;
-		while (ring->resphead &&
-			ring->resphead->rs != NULL) {
+		while ( ring->resphead && ring->resphead->rs != NULL) {
 			ring->resphead = ring->resphead->resp_next;
 		}
 		if (ring->resphead == NULL)
 			ring->resptail = NULL;
 		pthread_mutex_unlock(&ring->resplock);
+
 		while (response != ring->resphead) {
 #if ENABLE_GLOBAL_RESULT_CACHE
+			ASSERT_THREAD(MASTER_THREAD, 0);
+#if 0
+	ResultSet* rs = response->rs;
+	for (int i = 0; rs && i < TAU; i++) {
+		unsigned long hex = (long)rs->results_hamming[i];
+		if ((hex > 0x10000000 && ((hex & 0xffffffff00000000LL) != 0x2aaa00000000))) {
+			fprintf(stderr, "doc_word_string=[%s]\n", response->doc_word_string.c_str());
+			int tryc = rs->results_hamming[i][0];
+			fprintf(stderr, "rs->results_hamming[%d] too big %p, %d\n", i,
+					rs->results_hamming[i], tryc);
+		}
+	}
+#endif
 			resultCache.insert(std::pair<std::string, ResultSet*>(
 					response->doc_word_string, response->rs));
 #else
@@ -904,6 +950,7 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 	// int in_flight = 0;
 
 	long long start = GetClockTimeInUS();
+	// fprintf(stderr, "%d:%d Processing the results of %d\n", thread_type, thread_id, doc_id);
 	// fprintf(stderr, ".");
 
 	/* Hopefully all the words are sent to word searchers in VPTreeMasterMatchDocument,
@@ -917,7 +964,7 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 		WordRequestResponse* response = NULL;
 		WordRequestResponse* request = NULL;
 #endif
-		if (*doc_word) {
+		// if (*doc_word) {
 			std::string doc_word_string = word_to_string(doc_word); // SPEED UP: question, I cannot reuse the pointer doc_str, but can I change *doc_str? */
 
 			if (docWords.count(doc_word_string))
@@ -937,7 +984,7 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 				request->tau = TAU;
 #endif
 			}
-		}
+		// }
 
 #if 0
 resend_the_request:
@@ -966,10 +1013,11 @@ resend_the_request:
 #endif
 
 		if (rs) {
+			for (int i = 0; i < TAU; i++) {
+				do_union_INT(&matchedHammingWords[i], rs->results_hamming[i]);
+			}
 			for (int i = 0; i < TAU; i++)
-				do_union(&matchedHammingWords[i], &rs->results_hamming[i]);
-			for (int i = 0; i < TAU; i++)
-				do_union(&matchedEditWords[i], &rs->results_edit[i]);
+				do_union_INT(&matchedEditWords[i], rs->results_edit[i]);
 		}
 #if 0
 		if (request)
@@ -989,13 +1037,13 @@ resend_the_request:
 #endif
 
 	for (int i = 1; i < TAU; i++)
-		do_union(&matchedHammingWords[i], &matchedHammingWords[i - 1]);
+		do_union_SET(&matchedHammingWords[i], &matchedHammingWords[i - 1]);
 
 	for (int i = 1; i < TAU; i++)
-		do_union(&matchedEditWords[i], &matchedEditWords[i - 1]);
+		do_union_SET(&matchedEditWords[i], &matchedEditWords[i - 1]);
 
 	for (int i = 0; i < TAU; i++)
-		do_union(&matchedEditWords[i], &matchedHammingWords[i]);
+		do_union_SET(&matchedEditWords[i], &matchedHammingWords[i]);
 
 	words_to_queries(matchedHammingWords, matchedEditWords, query_ids);
 
