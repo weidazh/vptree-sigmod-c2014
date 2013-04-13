@@ -18,11 +18,10 @@ struct stats {
 	long long total_docs_wait;
 	long long start_serial;
 	long long total_serial;
-	long long start_parallel;
-	long long total_parallel;
 	long long total_indexing;
 	long long start_indexing_and_query_adding;
 	long long total_indexing_and_query_adding;
+	long long total_master_indexing;
 	long long total_resultmerging;
 };
 extern __thread long long thread_total_resultmerging;
@@ -38,6 +37,7 @@ extern __thread int thread_id;
 extern int doc_worker_n;
 #define WORD_SEARCHER_N 24
 extern int word_searcher_n;
+#define REQ_RING_N 12
 
 #define ASSERT_THREAD(type, id) \
 	if (type != thread_type || id != thread_id) { \

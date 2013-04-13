@@ -26,7 +26,7 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 #define ENABLE_THREAD_RESULT_CACHE 0
 #define ENABLE_GLOBAL_RESULT_CACHE 1
 
-#define ENABLE_MULTI_EDITVPTREE 0
+#define ENABLE_MULTI_EDITVPTREE 1
 
 typedef long WordIDType;
 #define MAX_INTEGER 0x7fffffff
@@ -283,8 +283,7 @@ static int new_vptrees_unless_exists() {
 		long long end = GetClockTimeInUS();
 		/* As we have the vpTreeLock, I can access the stats safely */
 		stats.total_indexing += end - start;
-		stats.total_indexing_and_query_adding = GetClockTimeInUS() - stats.start_indexing_and_query_adding;
-		stats.start_parallel = GetClockTimeInUS();
+		stats.total_indexing_and_query_adding += GetClockTimeInUS() - stats.start_indexing_and_query_adding;
 		// fprintf(stderr, "[%lld.%06lld] end of indexing\n", end / 1000000LL % 86400, end % 1000000LL);
 
 		pthread_rwlock_unlock(&vpTreeLock);
@@ -305,7 +304,6 @@ static void clear_vptrees() {
 		}
 		long long now = GetClockTimeInUS();
 		// fprintf(stderr, "[%lld.%06lld] start of indexing\n", now / 1000000LL % 86400, now % 1000000LL);
-		stats.total_parallel += GetClockTimeInUS() - stats.start_parallel;
 		stats.start_indexing_and_query_adding = GetClockTimeInUS();
 		delete hamming_vptree;
 		hamming_vptree = NULL;
@@ -584,7 +582,6 @@ struct WordRequestRing {
 			tail = tail->next;
 	}
 };
-#define REQ_RING_N 1
 struct WordRequestResponseRing {
 	WordRequestRing* reqring[REQ_RING_N];
 	WordRequestResponse* resphead;
@@ -850,9 +847,17 @@ int word_searcher_n = WORD_SEARCHER_N;
 #if 1
 /* This part is called by master thread to presend requests to WordMatcher. */
 std::set<std::string> batch_doc_words;
-ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str) {
-	if (new_vptrees_unless_exists())
+void BuildIndex() {
+	if (new_vptrees_unless_exists()) {
+		// fprintf(stderr, "%d:%d Index built\n", thread_type, thread_id);
 		batch_doc_words.clear();
+	}
+}
+ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str) {
+	if (new_vptrees_unless_exists()) {
+		// fprintf(stderr, "%d:%d Index built\n", thread_type, thread_id);
+		batch_doc_words.clear();
+	}
 	const int BATCH = 64;
 	int batch = 0;
 	WordRequestResponse* last_req = NULL;
@@ -943,7 +948,9 @@ void WaitWordResults() {
 
 ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids)
 {
-	new_vptrees_unless_exists();
+	if (new_vptrees_unless_exists()) {
+		// fprintf(stderr, "%d:%d Index built\n", thread_type, thread_id);
+	}
 	SET matchedHammingWords[TAU];
 	SET matchedEditWords[TAU];
 	std::set<std::string> docWords;

@@ -218,15 +218,13 @@ ErrorCode InitializeIndex(){
 	stats.total_docs_wait = 0;
 	stats.start_serial = GetClockTimeInUS();
 	stats.total_serial = 0;
-	stats.start_parallel = GetClockTimeInUS();
-	stats.total_parallel = 0;
 	stats.start_indexing_and_query_adding = GetClockTimeInUS();
 	return EC_SUCCESS;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
-#define SHOW_STATS(total_what) ""#total_what" = %lld.%06lld\n", \
+#define SHOW_STATS(sym, total_what) ""sym" = %lld.%06lld\n", \
 			total_what / 1000000LL, \
 			total_what % 1000000LL
 
@@ -234,18 +232,17 @@ ErrorCode DestroyIndex(){
 	KillThreads();
 	vptree_system_destroy();
 
-	stats.total_parallel += GetClockTimeInUS() - stats.start_parallel;
-	fprintf(stderr, SHOW_STATS(stats.total_enqueuing));
-	fprintf(stderr, SHOW_STATS(stats.total_wait));
-	fprintf(stderr, SHOW_STATS(stats.total_words_wait));
-	fprintf(stderr, SHOW_STATS(stats.total_docs_wait));
-	fprintf(stderr, SHOW_STATS(stats.total_resultmerging));
-	fprintf(stderr, "stats.total_resultmerging / stats.total_docs_wait = %.2f\n",
+	fprintf(stderr, SHOW_STATS("master index", stats.total_master_indexing));
+	fprintf(stderr, SHOW_STATS("  indexing", stats.total_indexing));
+	fprintf(stderr, SHOW_STATS("  indexing2", stats.total_indexing_and_query_adding));
+	fprintf(stderr, SHOW_STATS("enqueue", stats.total_enqueuing));
+	fprintf(stderr, SHOW_STATS("wait", stats.total_wait));
+	fprintf(stderr, SHOW_STATS("  words", stats.total_words_wait));
+	fprintf(stderr, SHOW_STATS("  docs ", stats.total_docs_wait));
+	fprintf(stderr, SHOW_STATS("    merge", stats.total_resultmerging));
+	fprintf(stderr, "    merge / docs_wait = %.2f (expect 12)\n",
 		(double)stats.total_resultmerging / stats.total_docs_wait );
-	fprintf(stderr, SHOW_STATS(stats.total_serial));
-	fprintf(stderr, SHOW_STATS(stats.total_parallel));
-	fprintf(stderr, SHOW_STATS(stats.total_indexing));
-	fprintf(stderr, SHOW_STATS(stats.total_indexing_and_query_adding));
+	fprintf(stderr, SHOW_STATS("serial", stats.total_serial));
 
 	return EC_SUCCESS;
 }
@@ -489,6 +486,9 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 	}
 	if (threadsPool.in_flight == 0) {
 		stats.total_serial += GetClockTimeInUS() - stats.start_serial;
+		long long start = GetClockTimeInUS();
+		BuildIndex();
+		stats.total_master_indexing += GetClockTimeInUS() - start;
 		stats.start_enqueuing = GetClockTimeInUS();
 	}
 	return MTVPTreeMatchDocument(doc_id, doc_str);
@@ -534,7 +534,7 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 	if (docs.size() == 0) {
 		stats.total_enqueuing += GetClockTimeInUS() - stats.start_enqueuing;
 		WaitResults();
-		fprintf(stderr, ".");
+		// fprintf(stderr, ".");
 	}
 	if (docs.size() == 0) {
 		*p_doc_id = 0;
