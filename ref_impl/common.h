@@ -16,6 +16,7 @@ struct stats {
 	long long total_wait;
 	long long total_words_wait;
 	long long total_docs_wait;
+	long long total_docs_wait_small;
 	long long start_serial;
 	long long total_serial;
 	long long total_indexing;
@@ -38,6 +39,8 @@ extern __thread int thread_id;
 #define PHRASE_WAIT_WORDS 4
 #define PHRASE_WAIT_DOCS 5
 extern int phrase;
+extern int hku;
+extern FILE* logf;
 
 #define DOC_WORKER_N 24
 extern int doc_worker_n;

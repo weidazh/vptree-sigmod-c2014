@@ -42,6 +42,9 @@ __thread int thread_id;
 __thread int thread_type;
 __thread long long thread_total_resultmerging;
 int phrase;
+int n_phrases = 0;
+int hku = 0;
+FILE* logf = stdout;
 // Then `Threads create' is threadsPool.n
 
 #define INVALID_DOC_ID 0
@@ -193,31 +196,39 @@ void KillThreads();
 
 void setPhrase(int phrase_to_be) {
 	static const char* PROG = "  -/|\\";
-	static int progbar;
-	if (phrase == 0) {
-		if(getenv("PROGBAR") != NULL) {
-			progbar = 1;
-			fprintf(stderr, "\n.");
-		}
+	static int progbar = 0;
+	if (phrase == 0 && hku) {
+		progbar = 1;
+		fprintf(logf, "\n.");
 	}
 	phrase = phrase_to_be;
+	if (phrase_to_be == 1)
+		n_phrases += 1;
 	if (progbar) {
-		fprintf(stderr, "\b%c", PROG[phrase_to_be]);
+		if (n_phrases % 8 == 0 && phrase_to_be == 1) {
+			fprintf(logf, "\b..");
+		}
+		fprintf(logf, "\b%c", PROG[phrase_to_be]);
 	}
 }
 
 ErrorCode InitializeIndex(){
 	thread_type = MASTER_THREAD;
 	thread_id = 0;
+	if (strcmp(getenv("HOSTNAME"), "sg010") == 0) {
+		hku = 1;
+		logf = stderr;
+	}
 	setPhrase(PHRASE_SERIAL);
+
 
 	char* env_doc_worker_n;
 	if ((env_doc_worker_n = getenv("DOC_WORKER_N")) != NULL) {
 		doc_worker_n = atoi(env_doc_worker_n);
 	}
-	fprintf(stderr, "doc_worker_n = %d\n", doc_worker_n);
+	fprintf(logf, "doc_worker_n = %d\n", doc_worker_n);
 	if (doc_worker_n > DOC_WORKER_N) {
-		fprintf(stderr, "doc_worker_n > DOC_WORKER_N\n");
+		fprintf(logf, "doc_worker_n > DOC_WORKER_N\n");
 		exit(1);
 	}
 	threadsPool.n = 0;
@@ -250,17 +261,21 @@ ErrorCode DestroyIndex(){
 	KillThreads();
 	vptree_system_destroy();
 
-	fprintf(stderr, SHOW_STATS("master index", stats.total_master_indexing));
-	fprintf(stderr, SHOW_STATS("  indexing", stats.total_indexing));
-	fprintf(stderr, SHOW_STATS("  indexing2", stats.total_indexing_and_query_adding));
-	fprintf(stderr, SHOW_STATS("enqueue", stats.total_enqueuing));
-	fprintf(stderr, SHOW_STATS("wait", stats.total_wait));
-	fprintf(stderr, SHOW_STATS("  words", stats.total_words_wait));
-	fprintf(stderr, SHOW_STATS("  docs ", stats.total_docs_wait));
-	fprintf(stderr, SHOW_STATS("    merge", stats.total_resultmerging));
-	fprintf(stderr, "    merge / docs_wait = %.2f (expect 12)\n",
+	fprintf(logf, "n_phrases %d\n", n_phrases);
+	fprintf(logf, "\n");
+	fprintf(logf, SHOW_STATS("master index", stats.total_master_indexing));
+	fprintf(logf, SHOW_STATS("  indexing", stats.total_indexing));
+	fprintf(logf, SHOW_STATS("  indexing2", stats.total_indexing_and_query_adding));
+	fprintf(logf, SHOW_STATS("enqueue", stats.total_enqueuing));
+	fprintf(logf, SHOW_STATS("wait", stats.total_wait));
+	fprintf(logf, SHOW_STATS("  words", stats.total_words_wait));
+	fprintf(logf, SHOW_STATS("  docs ", stats.total_docs_wait));
+	fprintf(logf, SHOW_STATS("    (last half)", stats.total_docs_wait_small));
+	fprintf(logf, SHOW_STATS("    merge", stats.total_resultmerging));
+	fprintf(logf, "    merge / docs_wait = %.2f (expect 12)\n",
 		(double)stats.total_resultmerging / stats.total_docs_wait );
-	fprintf(stderr, SHOW_STATS("serial", stats.total_serial));
+	fprintf(logf, SHOW_STATS("serial", stats.total_serial));
+	fprintf(logf, "\n");
 
 	return EC_SUCCESS;
 }
@@ -279,7 +294,7 @@ ErrorCode StartQuery(QueryID query_id, const char* query_str, MatchType match_ty
 	queries.push_back(query);
 #endif
 	if (threadsPool.in_flight > 0) {
-		fprintf(stderr, "threadsPool.in_flight > 0\n");
+		fprintf(logf, "threadsPool.in_flight > 0\n");
 		exit(1);
 	}
 
@@ -304,7 +319,7 @@ ErrorCode EndQuery(QueryID query_id)
 	}
 #endif
 	if (threadsPool.in_flight > 0) {
-		fprintf(stderr, "threadsPool.in_flight > 0\n");
+		fprintf(logf, "threadsPool.in_flight > 0\n");
 		exit(1);
 	}
 	VPTreeQueryRemove(query_id);
@@ -326,7 +341,7 @@ void* MTWorker(void* arg) {
 	thread_type = DOC_WORKER_THREAD;
 	thread_id = tid;
 
-	thread_fprintf(stderr, "MTWorker[%d] starting\n", tid);
+	thread_fprintf(logf, "MTWorker[%d] starting\n", tid);
 	vptree_doc_worker_init();
 
 	// pthread_mutex_lock(&threadsPool.lock);
@@ -336,7 +351,7 @@ void* MTWorker(void* arg) {
 
 	pthread_mutex_lock(&rr->lock);
 	while (! rr->finishing) {
-		thread_fprintf(stderr, "MTWorker[%d] waiting\n", tid);
+		thread_fprintf(logf, "MTWorker[%d] waiting\n", tid);
 		while(rr->head == rr->tail && !rr->finishing) {
 			pthread_cond_wait(&rr->cond, &rr->lock);
 		}
@@ -351,7 +366,7 @@ void* MTWorker(void* arg) {
 		DocID doc_id = doc->doc_id;
 		const char* doc_str = doc->doc_str;
 
-		thread_fprintf(stderr, "MTWorker[%d] found doc_id %d\n", tid, doc_id);
+		thread_fprintf(logf, "MTWorker[%d] found doc_id %d\n", tid, doc_id);
 
 		vector<unsigned int> query_ids;
 
@@ -359,11 +374,11 @@ void* MTWorker(void* arg) {
 		doc->doc_result = new DocumentResults(doc_id, query_ids);
 
 #if 0
-		thread_fprintf(stderr, "MTWorker[%d] signaling rr results\n", tid);
+		thread_fprintf(logf, "MTWorker[%d] signaling rr results\n", tid);
 		pthread_mutex_lock(&rr->lock);
 		rr->doc_result = doc;
 
-		thread_fprintf(stderr, "MTWorker[%d] signaling availability \n", tid);
+		thread_fprintf(logf, "MTWorker[%d] signaling availability \n", tid);
 		pthread_mutex_lock(&threadsPool.lock);
 		threadsPool.available[tid] = 1;
 		pthread_cond_signal(&threadsPool.cond);
@@ -412,19 +427,19 @@ int CreateThread() {
 #if 0
 int FindThread(int reset_available) {
 	int i;
-	thread_fprintf(stderr, "MasterThread: searching workers\n");
+	thread_fprintf(logf, "MasterThread: searching workers\n");
 	pthread_mutex_lock(&threadsPool.lock);
 	while (1) {
 		for (i = 0; i < threadsPool.n; i++) {
 			if (threadsPool.available[i]) {
-				thread_fprintf(stderr, "MasterThread: worker %d available\n", i);
+				thread_fprintf(logf, "MasterThread: worker %d available\n", i);
 				if (reset_available)
 					threadsPool.available[i] = 0;
 				pthread_mutex_unlock(&threadsPool.lock);
 				return i;
 			}
 		}
-		thread_fprintf(stderr, "MasterThread: no workers, waiting for them\n");
+		thread_fprintf(logf, "MasterThread: no workers, waiting for them\n");
 		pthread_cond_wait(&threadsPool.cond, &threadsPool.lock);
 	}
 }
@@ -434,7 +449,7 @@ int FindThreadAndMoveBack(int reset_available) {
 	int n;
 	n = FindThread(reset_available);
 
-	thread_fprintf(stderr, "MasterThread: now found %d\n", n);
+	thread_fprintf(logf, "MasterThread: now found %d\n", n);
 	pthread_mutex_lock(&threadsPool.rr[n].lock);
 
 	if (threadsPool.rr[n].doc_result) {
@@ -464,12 +479,12 @@ ErrorCode MTVPTreeMatchDocument(DocID doc_id, const char* doc_str)
 
 	VPTreeMasterMatchDocument(doc_id, doc_str);
 
-	thread_fprintf(stderr, "MasterThread: doc %d comes\n", doc_id);
+	thread_fprintf(logf, "MasterThread: doc %d comes\n", doc_id);
 	pthread_mutex_lock(&threadsPool.lock);
 	if (((threadsPool.tail + 1) % MAX_BATCH_DOC == threadsPool.result_head) ||
 	    ((threadsPool.tail + 1) % MAX_BATCH_DOC == threadsPool.head)) {
 		pthread_mutex_unlock(&threadsPool.lock);
-		fprintf(stderr, "MAX_BATCH_DOC is not large enough\n");
+		fprintf(logf, "MAX_BATCH_DOC is not large enough\n");
 		exit(1);
 	}
 	threadsPool.queue[threadsPool.tail].doc_id = doc_id;
@@ -487,7 +502,7 @@ ErrorCode MTVPTreeMatchDocument(DocID doc_id, const char* doc_str)
 
 	pthread_cond_signal(&threadsPool.rr[n].cond);
 	pthread_mutex_unlock(&threadsPool.rr[n].lock);
-	thread_fprintf(stderr, "MasterThread: signal sent to MTWorker[%d]\n", n);
+	thread_fprintf(logf, "MasterThread: signal sent to MTWorker[%d]\n", n);
 #endif
 
 	ASSERT_THREAD(MASTER_THREAD, 0);
@@ -517,7 +532,8 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 void WaitDocumentResults() {
 	pthread_mutex_lock(&threadsPool.resplock);
 	pthread_cond_broadcast(&threadsPool.cond);
-	// fprintf(stderr, "threadsPool.in_flight = %d\n", threadsPool.in_flight);
+	// fprintf(logf, "threadsPool.in_flight = %d\n", threadsPool.in_flight);
+	long long start_small_wait = -1;
 	while(threadsPool.in_flight) {
 		struct RequestResponse* resp = &threadsPool.queue[threadsPool.result_head];
 		while (resp->doc_result == NULL) {
@@ -527,8 +543,15 @@ void WaitDocumentResults() {
 		docs.push_back(resp->doc_result);
 		threadsPool.result_head = (threadsPool.result_head + 1) % MAX_BATCH_DOC;
 		threadsPool.in_flight -= 1;
+		if (threadsPool.in_flight * 2 == doc_worker_n) {
+			start_small_wait = GetClockTimeInUS();
+		}
 	}
 	pthread_mutex_unlock(&threadsPool.resplock);
+
+	if (start_small_wait >= 0) {
+		stats.total_docs_wait_small = GetClockTimeInUS() - start_small_wait;
+	}
 }
 
 void WaitResults() {
@@ -558,7 +581,7 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 	if (docs.size() == 0) {
 		stats.total_enqueuing += GetClockTimeInUS() - stats.start_enqueuing;
 		WaitResults();
-		// fprintf(stderr, ".");
+		// fprintf(logf, ".");
 	}
 	if (docs.size() == 0) {
 		*p_doc_id = 0;
@@ -569,7 +592,7 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 	else {
 		DocumentResults* doc = docs[0];
 		docs.erase(docs.begin());
-		thread_fprintf(stderr, "doc_id result %d\n", doc->doc_id);
+		thread_fprintf(logf, "doc_id result %d\n", doc->doc_id);
 		*p_doc_id = doc->doc_id;
 		*p_num_res = doc->num_res;
 		*p_query_ids = doc->query_ids;
