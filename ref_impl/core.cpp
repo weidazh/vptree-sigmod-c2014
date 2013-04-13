@@ -41,6 +41,7 @@ int doc_worker_n = DOC_WORKER_N;
 __thread int thread_id;
 __thread int thread_type;
 __thread long long thread_total_resultmerging;
+int phrase;
 // Then `Threads create' is threadsPool.n
 
 #define INVALID_DOC_ID 0
@@ -190,8 +191,25 @@ struct ThreadsPool threadsPool;
 int CreateThread();
 void KillThreads();
 
+void setPhrase(int phrase_to_be) {
+	static const char* PROG = "  -/|\\";
+	static int progbar;
+	if (phrase == 0) {
+		if(getenv("PROGBAR") != NULL) {
+			progbar = 1;
+			fprintf(stderr, "\n.");
+		}
+	}
+	phrase = phrase_to_be;
+	if (progbar) {
+		fprintf(stderr, "\b%c", PROG[phrase_to_be]);
+	}
+}
+
 ErrorCode InitializeIndex(){
 	thread_type = MASTER_THREAD;
+	thread_id = 0;
+	setPhrase(PHRASE_SERIAL);
 
 	char* env_doc_worker_n;
 	if ((env_doc_worker_n = getenv("DOC_WORKER_N")) != NULL) {
@@ -487,7 +505,9 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 	if (threadsPool.in_flight == 0) {
 		stats.total_serial += GetClockTimeInUS() - stats.start_serial;
 		long long start = GetClockTimeInUS();
+		setPhrase(PHRASE_INDEX);
 		BuildIndex();
+		setPhrase(PHRASE_ENQUEUE);
 		stats.total_master_indexing += GetClockTimeInUS() - start;
 		stats.start_enqueuing = GetClockTimeInUS();
 	}
@@ -514,11 +534,15 @@ void WaitDocumentResults() {
 void WaitResults() {
 	long long start = GetClockTimeInUS();
 
+	setPhrase(PHRASE_WAIT_WORDS);
 	WaitWordResults();
 
 	long long mid = GetClockTimeInUS();
 
+	setPhrase(PHRASE_WAIT_DOCS);
 	WaitDocumentResults();
+
+	setPhrase(PHRASE_SERIAL);
 
 	long long end = GetClockTimeInUS();
 	stats.total_wait += (end - start);

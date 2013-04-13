@@ -32,6 +32,12 @@ extern struct stats stats;
 #define WORD_SEARCHER_THREAD 3
 extern __thread int thread_type;
 extern __thread int thread_id;
+#define PHRASE_SERIAL 1 /* Input/Output */ 
+#define PHRASE_INDEX 2
+#define PHRASE_ENQUEUE 3
+#define PHRASE_WAIT_WORDS 4
+#define PHRASE_WAIT_DOCS 5
+extern int phrase;
 
 #define DOC_WORKER_N 24
 extern int doc_worker_n;
@@ -39,11 +45,18 @@ extern int doc_worker_n;
 extern int word_searcher_n;
 #define REQ_RING_N 12
 
+#define ASSERT_PHRASE(asserted_phrase) \
+	if (phrase != (asserted_phrase)) { \
+		fprintf(stderr, "%d:%d-%d ERROR not in phrase %d %s:L%d\n", \
+				thread_type, thread_id, phrase, \
+				asserted_phrase, __FILE__, __LINE__); \
+	}
+
 #define ASSERT_THREAD(type, id) \
-	if (type != thread_type || id != thread_id) { \
+	if ((type) != thread_type || (id) != thread_id) { \
 		fprintf(stderr, "%d:%d ERROR not %d:%d %s:L%d\n", \
 				thread_type, thread_id,	 \
-				type, id, \
+				(type), (id), \
 				__FILE__, __LINE__); \
 	} else {}
 #endif

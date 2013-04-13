@@ -154,7 +154,6 @@ WordMapByID wordMapByID;
 // std::set<std::string> wordSet;
 typedef VpTree<std::string, int, hamming> HammingVpTree;
 typedef VpTree<std::string, int, edit> EditVpTree;
-pthread_rwlock_t vpTreeLock = PTHREAD_RWLOCK_INITIALIZER;
 HammingVpTree* hamming_vptree;
 EditVpTree* edit_vptree[MAX_WORD_LENGTH + 1];
 
@@ -213,23 +212,19 @@ static std::string word_to_string(const char* word) {
 // int old_perf_edit;
 // return whether or not a new tree is created
 static int new_vptrees_unless_exists() {
+	if (thread_type != MASTER_THREAD || thread_id != 0)
+		return 0;
+
 	std::vector<std::string> hammingWordList;
 	std::vector<std::string> editWordList;
-	pthread_rwlock_rdlock(&vpTreeLock);
 	if (! hamming_vptree) {
-		pthread_rwlock_unlock(&vpTreeLock);
-
-		pthread_rwlock_wrlock(&vpTreeLock);
-		if (hamming_vptree) {
-			pthread_rwlock_unlock(&vpTreeLock);
-			return 0;
-		}
 		long long start = GetClockTimeInUS();
 		hamming_vptree = new HammingVpTree();
 		for (int i = 0; i <= MAX_WORD_LENGTH; i++) {
 			edit_vptree[i] = new EditVpTree();
 		}
-		pthread_rwlock_rdlock(&wordMapLock);
+		// pthread_rwlock_rdlock(&wordMapLock);
+		ASSERT_PHRASE(PHRASE_INDEX);
 		for(std::map<std::string, Word*>::iterator i = wordMap.begin();
 			i != wordMap.end(); i++) {
 
@@ -240,7 +235,7 @@ static int new_vptrees_unless_exists() {
 			if (w->hasEdit())
 				editWordList.push_back(i->first);
 		}
-		pthread_rwlock_unlock(&wordMapLock);
+		// pthread_rwlock_unlock(&wordMapLock);
 		// fprintf(stdout, "searching hamming/edit = %d/%d\n", perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
 		// old_perf_hamming = perf_counter_hamming;
 		// old_perf_edit = perf_counter_edit;
@@ -286,22 +281,16 @@ static int new_vptrees_unless_exists() {
 		stats.total_indexing_and_query_adding += GetClockTimeInUS() - stats.start_indexing_and_query_adding;
 		// fprintf(stderr, "[%lld.%06lld] end of indexing\n", end / 1000000LL % 86400, end % 1000000LL);
 
-		pthread_rwlock_unlock(&vpTreeLock);
 		return 1;
 	}
-	pthread_rwlock_unlock(&vpTreeLock);
 	return 0;
 }
 
-static void clear_vptrees() {
-	pthread_rwlock_rdlock(&vpTreeLock);
+static int clear_vptrees() {
+	if (thread_type != MASTER_THREAD || thread_id != 0)
+		return 0;
+
 	if (hamming_vptree) {
-		pthread_rwlock_unlock(&vpTreeLock);
-		pthread_rwlock_wrlock(&vpTreeLock);
-		if (! hamming_vptree) {
-			pthread_rwlock_unlock(&vpTreeLock);
-			return;
-		}
 		long long now = GetClockTimeInUS();
 		// fprintf(stderr, "[%lld.%06lld] start of indexing\n", now / 1000000LL % 86400, now % 1000000LL);
 		stats.start_indexing_and_query_adding = GetClockTimeInUS();
@@ -311,8 +300,9 @@ static void clear_vptrees() {
 			delete edit_vptree[i];
 			edit_vptree[i] = NULL;
 		}
+		return 1;
 	}
-	pthread_rwlock_unlock(&vpTreeLock);
+	return 0;
 }
 
 ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType match_type, unsigned int match_dist) {
@@ -325,7 +315,9 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 	int i = 0;
 	ITERATE_QUERY_WORDS(query_word, query_str) {
 		std::string query_word_string = word_to_string(query_word);
-		pthread_rwlock_wrlock(&wordMapLock);
+		// pthread_rwlock_wrlock(&wordMapLock);
+		ASSERT_PHRASE(PHRASE_SERIAL);
+		ASSERT_THREAD(MASTER_THREAD, 0);
 		WordMap::iterator found = wordMap.find(query_word_string);
 		Word* word;
 		if (found != wordMap.end()) {
@@ -339,7 +331,7 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 			wordMapByID.insert(std::pair<WordIDType, Word*>(word->id(), word));
 			// wordSet.insert(query_word_string);
 		}
-		pthread_rwlock_unlock(&wordMapLock);
+		// pthread_rwlock_unlock(&wordMapLock);
 		if (i >= MAX_QUERY_WORDS)
 		{
 			fprintf(stderr, "ERROR! exceed MAX_QUERY_WORDS\n");
@@ -368,11 +360,13 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 	bool first = true;
 	ITERATE_QUERY_WORDS(query_word, query->getQueryStr()) {
 		std::string query_word_string = word_to_string(query_word);
-		pthread_rwlock_wrlock(&wordMapLock);
+		// pthread_rwlock_wrlock(&wordMapLock);
+		ASSERT_PHRASE(PHRASE_SERIAL);
+		ASSERT_THREAD(MASTER_THREAD, 0);
 		WordMap::iterator word_found = wordMap.find(query_word_string);
 		if (word_found == wordMap.end()) {
 			fprintf(stderr, "ERROR: word not found for query(%s) and word(%s)\n", query->getQueryStr(), query_word_string.c_str());
-			pthread_rwlock_unlock(&wordMapLock);
+			// pthread_rwlock_unlock(&wordMapLock);
 			continue;
 		}
 		Word* word = I2P(word_found->second);
@@ -388,7 +382,7 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 
 			delete word;
 		}
-		pthread_rwlock_unlock(&wordMapLock);
+		// pthread_rwlock_unlock(&wordMapLock);
 		first = false;
 	}
 	delete query;
