@@ -85,7 +85,7 @@ public:
 // pthread_mutex_t max_word_id_lock = PTHREAD_MUTEX_INITIALIZER;
 // static WordIDType max_word_id = 0;
 
-pthread_rwlock_t wordLock = PTHREAD_RWLOCK_INITIALIZER;
+// pthread_rwlock_t wordLock = PTHREAD_RWLOCK_INITIALIZER;
 __thread WordIDType thread_max_word_id = 0;
 class Word {
 	std::string word;
@@ -99,7 +99,12 @@ public:
 		: word(word), hamming_queries(0), edit_queries(0), first_word_queries() {
 
 		// pthread_mutex_lock(&max_word_id_lock);
+#if 0
 		word_id = thread_max_word_id * DOC_WORKER_N + thread_id;
+#else
+		ASSERT_THREAD(MASTER_THREAD, 0);
+		word_id = thread_max_word_id;
+#endif
 		if (word_id > MAX_INTEGER) {
 			fprintf(logf, "Yes, you should not use int as WordIDType\n");
 		}
@@ -107,27 +112,30 @@ public:
 		// pthread_mutex_unlock(&max_word_id_lock);
 	}
 	void push_query(QueryID q, bool first, MatchType match_type) {
-		pthread_rwlock_wrlock(&wordLock);
+		// pthread_rwlock_wrlock(&wordLock);
+		ASSERT_THREAD(MASTER_THREAD, 0);
 		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
 			this->hamming_queries += 1;
 		if (match_type == MT_EDIT_DIST)
 			this->edit_queries += 1;
 		if (first)
 			this->first_word_queries.insert(q);
-		pthread_rwlock_unlock(&wordLock);
+		// pthread_rwlock_unlock(&wordLock);
 	}
 	void remove_query(QueryID q, MatchType match_type) {
-		pthread_rwlock_wrlock(&wordLock);
+		// pthread_rwlock_wrlock(&wordLock);
+		ASSERT_THREAD(MASTER_THREAD, 0);
 		if (match_type == MT_HAMMING_DIST || match_type == MT_EXACT_MATCH)
 			this->hamming_queries -= 1;
 		if (match_type == MT_EDIT_DIST)
 			this->edit_queries -= 1;
-		pthread_rwlock_unlock(&wordLock);
+		// pthread_rwlock_unlock(&wordLock);
 	}
 	void remove_first_word_query(QueryID q) {
-		pthread_rwlock_wrlock(&wordLock);
+		// pthread_rwlock_wrlock(&wordLock);
+		ASSERT_THREAD(MASTER_THREAD, 0);
 		this->first_word_queries.erase(q);
-		pthread_rwlock_unlock(&wordLock);
+		// pthread_rwlock_unlock(&wordLock);
 	}
 	std::set<QueryID>::iterator begin() const{
 		return first_word_queries.begin();
@@ -151,7 +159,7 @@ public:
 
 typedef std::map<std::string, Word*> WordMap;
 typedef std::map<WordIDType, Word*> WordMapByID;
-pthread_rwlock_t wordMapLock = PTHREAD_RWLOCK_INITIALIZER;
+// pthread_rwlock_t wordMapLock = PTHREAD_RWLOCK_INITIALIZER;
 WordMap wordMap;
 WordMapByID wordMapByID;
 // std::set<std::string> wordSet;
@@ -161,7 +169,7 @@ HammingVpTree* hamming_vptree;
 EditVpTree* edit_vptree[MAX_WORD_LENGTH + 1];
 
 typedef std::map<QueryID, Query*> QueryMap;
-pthread_rwlock_t queryMapLock = PTHREAD_RWLOCK_INITIALIZER;
+// pthread_rwlock_t queryMapLock = PTHREAD_RWLOCK_INITIALIZER;
 QueryMap queryMap;
 
 
@@ -180,7 +188,7 @@ public:
 #if ENABLE_RESULT_CACHE
 typedef std::map<std::string, ResultSet*> ResultCache;
 #if ENABLE_GLOBAL_RESULT_CACHE
-pthread_rwlock_t resultCacheLock = PTHREAD_RWLOCK_INITIALIZER;
+// pthread_rwlock_t resultCacheLock = PTHREAD_RWLOCK_INITIALIZER;
 ResultCache resultCache;
 #endif
 #if ENABLE_THREAD_RESULT_CACHE
@@ -265,14 +273,16 @@ static int new_vptrees_unless_exists() {
 
 #if ENABLE_RESULT_CACHE
 #if ENABLE_GLOBAL_RESULT_CACHE
-		pthread_rwlock_wrlock(&resultCacheLock);
+		ASSERT_THREAD(MASTER_THREAD, 0);
+		ASSERT_PHRASE(PHRASE_INDEX);
+		// pthread_rwlock_wrlock(&resultCacheLock);
 		for(ResultCache::iterator i = resultCache.begin();
 			i != resultCache.end();
 			i++ ) {
 			DELETE(i->second);
 		}
 		resultCache.clear();
-		pthread_rwlock_unlock(&resultCacheLock);
+		// pthread_rwlock_unlock(&resultCacheLock);
 #endif
 #if ENABLE_THREAD_RESULT_CACHE
 		for (int i = 0; i < doc_worker_n; i++) {
@@ -316,9 +326,10 @@ static int clear_vptrees() {
 ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType match_type, unsigned int match_dist) {
 	clear_vptrees();
 	Query* q = new Query(query_id, query_str, match_type, match_dist);
-	pthread_rwlock_wrlock(&queryMapLock);
+	ASSERT_THREAD(MASTER_THREAD, 0);
+	// pthread_rwlock_wrlock(&queryMapLock);
 	queryMap.insert(std::pair<QueryID, Query*>(query_id, q));
-	pthread_rwlock_unlock(&queryMapLock);
+	// pthread_rwlock_unlock(&queryMapLock);
 	bool first = true;
 	int i = 0;
 	ITERATE_QUERY_WORDS(query_word, query_str) {
@@ -355,16 +366,17 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 }
 
 ErrorCode VPTreeQueryRemove(QueryID query_id) {
-	pthread_rwlock_wrlock(&queryMapLock);
+	ASSERT_THREAD(MASTER_THREAD, 0);
+	// pthread_rwlock_wrlock(&queryMapLock);
 	QueryMap::iterator found = queryMap.find(query_id);
 	clear_vptrees();
 	if (found == queryMap.end()) {
-		pthread_rwlock_unlock(&queryMapLock);
+		// pthread_rwlock_unlock(&queryMapLock);
 		return EC_SUCCESS;
 	}
 	Query* query = I2P(found->second);
 	queryMap.erase(found);
-	pthread_rwlock_unlock(&queryMapLock);
+	// pthread_rwlock_unlock(&queryMapLock);
 	bool first = true;
 	ITERATE_QUERY_WORDS(query_word, query->getQueryStr()) {
 		std::string query_word_string = word_to_string(query_word);
@@ -487,13 +499,14 @@ ResultSet* findCachedResult(std::string doc_word_string) {
 	}
 #endif
 #if ENABLE_GLOBAL_RESULT_CACHE
-	pthread_rwlock_rdlock(&resultCacheLock);
+	ASSERT_PHRASE(PHRASE_WAIT_DOCS);
+	// pthread_rwlock_rdlock(&resultCacheLock);
 	found = resultCache.find(doc_word_string);
 
 	if (found != resultCache.end()) {
 		rs = found->second;
 	}
-	pthread_rwlock_unlock(&resultCacheLock);
+	// pthread_rwlock_unlock(&resultCacheLock);
 
 #if 0
 	for (int i = 0; rs && i < TAU; i++) {
