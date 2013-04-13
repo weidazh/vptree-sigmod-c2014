@@ -10,7 +10,12 @@ static long long GetClockTimeInUS()
 }
 
 struct stats {
+	long long start_enqueuing;
+	long long total_enqueuing;
+
 	long long total_wait;
+	long long total_words_wait;
+	long long total_docs_wait;
 	long long start_serial;
 	long long total_serial;
 	long long start_parallel;
@@ -33,4 +38,12 @@ extern __thread int thread_id;
 extern int doc_worker_n;
 #define WORD_SEARCHER_N 24
 extern int word_searcher_n;
+
+#define ASSERT_THREAD(type, id) \
+	if (type != thread_type || id != thread_id) { \
+		fprintf(stderr, "%d:%d ERROR not %d:%d %s:L%d\n", \
+				thread_type, thread_id,	 \
+				type, id, \
+				__FILE__, __LINE__); \
+	} else {}
 #endif

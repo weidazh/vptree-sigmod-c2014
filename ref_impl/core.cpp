@@ -155,26 +155,32 @@ vector<Query> queries;
 // Keeps all currently available results that has not been returned yet
 pthread_mutex_t docs_lock = PTHREAD_MUTEX_INITIALIZER;
 vector<DocumentResults*> docs;
-
+#define MAX_BATCH_DOC (48 * 4)
 struct RequestResponse {
-	int tid;
-	int finishing;
+	// int tid;
+	// int finishing;
 	DocID doc_id;
-	char* doc_str; /* malloc in master thread, free after the worker received */
+	const char* doc_str; /* malloc in master thread, free after the worker received */
 	DocumentResults* doc_result; /* malloc in master thread, moved to `docs' by master thread */
-	pthread_mutex_t lock;
-	pthread_cond_t cond;
+	// pthread_mutex_t lock;
+	// pthread_cond_t cond;
 };
 
 struct ThreadsPool {
 	int n;
 	int in_flight;
 	pthread_t pt[DOC_WORKER_N];
-	struct RequestResponse rr[DOC_WORKER_N];
+	struct RequestResponse queue[MAX_BATCH_DOC];
+	int head;
+	int tail;
+	int result_head;
+	int finishing;
 
 	pthread_mutex_t lock;
 	pthread_cond_t cond;
-	int available[DOC_WORKER_N];
+	pthread_mutex_t resplock;
+	pthread_cond_t respcond;
+	// int available[DOC_WORKER_N];
 };
 
 struct ThreadsPool threadsPool;
@@ -185,6 +191,8 @@ int CreateThread();
 void KillThreads();
 
 ErrorCode InitializeIndex(){
+	thread_type = MASTER_THREAD;
+
 	char* env_doc_worker_n;
 	if ((env_doc_worker_n = getenv("DOC_WORKER_N")) != NULL) {
 		doc_worker_n = atoi(env_doc_worker_n);
@@ -197,6 +205,8 @@ ErrorCode InitializeIndex(){
 	threadsPool.n = 0;
 	pthread_mutex_init(&threadsPool.lock, NULL);
 	pthread_cond_init(&threadsPool.cond, NULL);
+	pthread_mutex_init(&threadsPool.resplock, NULL);
+	pthread_cond_init(&threadsPool.respcond, NULL);
 
 	vptree_system_init();
 
@@ -204,6 +214,8 @@ ErrorCode InitializeIndex(){
 	srand(time(NULL));
 
 	stats.total_wait = 0;
+	stats.total_words_wait = 0;
+	stats.total_docs_wait = 0;
 	stats.start_serial = GetClockTimeInUS();
 	stats.total_serial = 0;
 	stats.start_parallel = GetClockTimeInUS();
@@ -223,12 +235,17 @@ ErrorCode DestroyIndex(){
 	vptree_system_destroy();
 
 	stats.total_parallel += GetClockTimeInUS() - stats.start_parallel;
+	fprintf(stderr, SHOW_STATS(stats.total_enqueuing));
 	fprintf(stderr, SHOW_STATS(stats.total_wait));
+	fprintf(stderr, SHOW_STATS(stats.total_words_wait));
+	fprintf(stderr, SHOW_STATS(stats.total_docs_wait));
+	fprintf(stderr, SHOW_STATS(stats.total_resultmerging));
+	fprintf(stderr, "stats.total_resultmerging / stats.total_docs_wait = %.2f\n",
+		(double)stats.total_resultmerging / stats.total_docs_wait );
 	fprintf(stderr, SHOW_STATS(stats.total_serial));
 	fprintf(stderr, SHOW_STATS(stats.total_parallel));
 	fprintf(stderr, SHOW_STATS(stats.total_indexing));
 	fprintf(stderr, SHOW_STATS(stats.total_indexing_and_query_adding));
-	fprintf(stderr, SHOW_STATS(stats.total_resultmerging));
 
 	return EC_SUCCESS;
 }
@@ -281,43 +298,52 @@ ErrorCode EndQuery(QueryID query_id)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
+struct MTWorkerArg {
+	int tid;
+	MTWorkerArg(int tid): tid(tid) {}
+};
 void* MTWorker(void* arg) {
-	int doc_id;
-	char* doc_str;
-	DocID last_doc_id = INVALID_DOC_ID;
-	struct RequestResponse* rr = (struct RequestResponse*)arg;
-	int tid = rr->tid;
+	struct MTWorkerArg* MTWorkerArg = (struct MTWorkerArg*) arg;
+	int tid = MTWorkerArg->tid;
+	struct ThreadsPool* rr = &threadsPool;
+	delete MTWorkerArg;
+
 	thread_type = DOC_WORKER_THREAD;
 	thread_id = tid;
+
 	thread_fprintf(stderr, "MTWorker[%d] starting\n", tid);
 	vptree_doc_worker_init();
-	pthread_mutex_lock(&threadsPool.lock);
-	threadsPool.available[tid] = 1;
-	pthread_cond_signal(&threadsPool.cond);
-	pthread_mutex_unlock(&threadsPool.lock);
+
+	// pthread_mutex_lock(&threadsPool.lock);
+	// threadsPool.available[tid] = 1;
+	// pthread_cond_signal(&threadsPool.cond);
+	// pthread_mutex_unlock(&threadsPool.lock);
+
 	pthread_mutex_lock(&rr->lock);
-	while (1) {
+	while (! rr->finishing) {
 		thread_fprintf(stderr, "MTWorker[%d] waiting\n", tid);
-		pthread_cond_wait(&rr->cond, &rr->lock);
+		while(rr->head == rr->tail && !rr->finishing) {
+			pthread_cond_wait(&rr->cond, &rr->lock);
+		}
 		if (rr->finishing)
 			break;
 
-		if (rr->doc_id == last_doc_id) {
-			thread_fprintf(stderr, "MTWorker[%d] found old doc_id\n", tid);
-			continue;
-		}
-		rr->doc_result = NULL;
-		doc_id = rr->doc_id;
-		doc_str = rr->doc_str;
+		struct RequestResponse* doc = &rr->queue[rr->head];
+		rr->head = (rr->head + 1) % MAX_BATCH_DOC;
 		pthread_mutex_unlock(&rr->lock);
+
+		doc->doc_result = NULL;
+		DocID doc_id = doc->doc_id;
+		const char* doc_str = doc->doc_str;
 
 		thread_fprintf(stderr, "MTWorker[%d] found doc_id %d\n", tid, doc_id);
 
 		vector<unsigned int> query_ids;
 
 		VPTreeMatchDocument(doc_id, doc_str, query_ids);
-		DocumentResults* doc = new DocumentResults(doc_id, query_ids);
+		doc->doc_result = new DocumentResults(doc_id, query_ids);
 
+#if 0
 		thread_fprintf(stderr, "MTWorker[%d] signaling rr results\n", tid);
 		pthread_mutex_lock(&rr->lock);
 		rr->doc_result = doc;
@@ -327,6 +353,13 @@ void* MTWorker(void* arg) {
 		threadsPool.available[tid] = 1;
 		pthread_cond_signal(&threadsPool.cond);
 		pthread_mutex_unlock(&threadsPool.lock);
+#endif
+		pthread_mutex_lock(&rr->lock);
+		if (rr->head == rr->tail) {
+			pthread_mutex_lock(&rr->resplock);
+			pthread_cond_signal(&rr->respcond);
+			pthread_mutex_unlock(&rr->resplock);
+		}
 	}
 	pthread_mutex_unlock(&rr->lock);
 	pthread_mutex_lock(&threadsPool.lock);
@@ -342,25 +375,26 @@ void* MTWorker(void* arg) {
  * If such behavior is changed, lock me! */
 // return 1 if OK
 int CreateThread() {
-	int ret_val;
-	int n = threadsPool.n;
+	int tid = threadsPool.n;
 
-	if (n >= doc_worker_n)
+	if (tid >= doc_worker_n)
 		return -1;
-
+#if 0
 	pthread_mutex_init(&threadsPool.rr[n].lock, NULL);
 	pthread_cond_init(&threadsPool.rr[n].cond, NULL);
 	threadsPool.rr[n].tid = n;
+#endif
 
-	ret_val = pthread_create(&threadsPool.pt[n], NULL, MTWorker, &threadsPool.rr[n]);
+	int ret_val = pthread_create(&threadsPool.pt[tid], NULL, MTWorker, new MTWorkerArg(tid));
 	if (ret_val != 0) {
 		perror("Pthread create error \n");
 		exit(1);
 	}
 	threadsPool.n ++;
-	return n;
+	return tid;
 }
 
+#if 0
 int FindThread(int reset_available) {
 	int i;
 	thread_fprintf(stderr, "MasterThread: searching workers\n");
@@ -395,31 +429,43 @@ int FindThreadAndMoveBack(int reset_available) {
 	}
 	return n;
 }
+#endif
 
 void KillThreads() {
-	int i;
-	int n;
-	void* ret_val;
+	pthread_mutex_lock(&threadsPool.lock);
+	threadsPool.finishing = 1;
+	pthread_cond_broadcast(&threadsPool.cond);
+	pthread_mutex_unlock(&threadsPool.lock);
 
-	for(i = 0; i < threadsPool.n; i++) {
-		n = FindThreadAndMoveBack(1);
-		threadsPool.rr[n].finishing = 1;
-		pthread_cond_signal(&threadsPool.rr[n].cond);
-		pthread_mutex_unlock(&threadsPool.rr[n].lock);
-	}
-	for(i = 0; i < threadsPool.n; i++) {
-		pthread_join(threadsPool.pt[i], &ret_val);
+	for(int tid = 0; tid < threadsPool.n; tid++) {
+		pthread_join(threadsPool.pt[tid], NULL);
 	}
 }
 
 ErrorCode MTVPTreeMatchDocument(DocID doc_id, const char* doc_str)
 {
-	char* cur_doc_str;
-	int n;
-	cur_doc_str = (char*) malloc(strlen(doc_str) + 1);
-	strcpy(cur_doc_str, doc_str);
+	char* cur_doc_str = (char*) malloc(strlen(doc_str) + 1);
+	strcpy(cur_doc_str, doc_str); // FIXME: Who is freeing it?
+
+	VPTreeMasterMatchDocument(doc_id, doc_str);
 
 	thread_fprintf(stderr, "MasterThread: doc %d comes\n", doc_id);
+	pthread_mutex_lock(&threadsPool.lock);
+	if (((threadsPool.tail + 1) % MAX_BATCH_DOC == threadsPool.result_head) ||
+	    ((threadsPool.tail + 1) % MAX_BATCH_DOC == threadsPool.head)) {
+		pthread_mutex_unlock(&threadsPool.lock);
+		fprintf(stderr, "MAX_BATCH_DOC is not large enough\n");
+		exit(1);
+	}
+	threadsPool.queue[threadsPool.tail].doc_id = doc_id;
+	threadsPool.queue[threadsPool.tail].doc_str = cur_doc_str;
+	threadsPool.queue[threadsPool.tail].doc_result = NULL;
+	threadsPool.tail = (threadsPool.tail + 1) % MAX_BATCH_DOC;
+	/* do not send signal until wait */
+	// pthread_cond_signal(&threadsPool.cond, &threadsPool.lock);
+	pthread_mutex_unlock(&threadsPool.lock);
+#if 0
+	// FIXME!!!! I forgot to lock this before ? 
 	n = FindThreadAndMoveBack(1);
 	threadsPool.rr[n].doc_id = doc_id;
 	threadsPool.rr[n].doc_str = cur_doc_str;
@@ -427,7 +473,9 @@ ErrorCode MTVPTreeMatchDocument(DocID doc_id, const char* doc_str)
 	pthread_cond_signal(&threadsPool.rr[n].cond);
 	pthread_mutex_unlock(&threadsPool.rr[n].lock);
 	thread_fprintf(stderr, "MasterThread: signal sent to MTWorker[%d]\n", n);
+#endif
 
+	ASSERT_THREAD(MASTER_THREAD, 0);
 	threadsPool.in_flight += 1;
 
 	return EC_SUCCESS;
@@ -441,34 +489,52 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 	}
 	if (threadsPool.in_flight == 0) {
 		stats.total_serial += GetClockTimeInUS() - stats.start_serial;
+		stats.start_enqueuing = GetClockTimeInUS();
 	}
 	return MTVPTreeMatchDocument(doc_id, doc_str);
+}
+
+void WaitDocumentResults() {
+	pthread_mutex_lock(&threadsPool.resplock);
+	pthread_cond_broadcast(&threadsPool.cond);
+	// fprintf(stderr, "threadsPool.in_flight = %d\n", threadsPool.in_flight);
+	while(threadsPool.in_flight) {
+		struct RequestResponse* resp = &threadsPool.queue[threadsPool.result_head];
+		while (resp->doc_result == NULL) {
+			pthread_cond_wait(&threadsPool.respcond, &threadsPool.resplock);
+		}
+
+		docs.push_back(resp->doc_result);
+		threadsPool.result_head = (threadsPool.result_head + 1) % MAX_BATCH_DOC;
+		threadsPool.in_flight -= 1;
+	}
+	pthread_mutex_unlock(&threadsPool.resplock);
+}
+
+void WaitResults() {
+	long long start = GetClockTimeInUS();
+
+	WaitWordResults();
+
+	long long mid = GetClockTimeInUS();
+
+	WaitDocumentResults();
+
+	long long end = GetClockTimeInUS();
+	stats.total_wait += (end - start);
+	stats.total_words_wait += (mid - start);
+	stats.total_docs_wait += (end - mid);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_query_ids)
 {
-	int n;
-	int i;
-	int Q[DOC_WORKER_N];
 	// Get the first undeliverd resuilt from "docs" and return it
-	if (docs.size() == 0 && threadsPool.in_flight) {
-		long long start = GetClockTimeInUS();
-		thread_fprintf(stderr, "threadsPool.in_flight = %d\n", threadsPool.in_flight);
-		n = 0;
-		for (i = 0; i < threadsPool.in_flight; i++) {
-			Q[i] = FindThreadAndMoveBack(1);
-			n += 1;
-			pthread_mutex_unlock(&threadsPool.rr[Q[i]].lock);
-		}
-		pthread_mutex_lock(&threadsPool.lock);
-		for (i = 0; i < n; i++) {
-			threadsPool.available[Q[i]] = 1;
-		}
-		pthread_mutex_unlock(&threadsPool.lock);
-		long long end = GetClockTimeInUS();
-		stats.total_wait += (end - start);
+	if (docs.size() == 0) {
+		stats.total_enqueuing += GetClockTimeInUS() - stats.start_enqueuing;
+		WaitResults();
+		fprintf(stderr, ".");
 	}
 	if (docs.size() == 0) {
 		*p_doc_id = 0;
@@ -480,7 +546,6 @@ ErrorCode GetNextAvailRes(DocID* p_doc_id, unsigned int* p_num_res, QueryID** p_
 		DocumentResults* doc = docs[0];
 		docs.erase(docs.begin());
 		thread_fprintf(stderr, "doc_id result %d\n", doc->doc_id);
-		threadsPool.in_flight -= 1;
 		*p_doc_id = doc->doc_id;
 		*p_num_res = doc->num_res;
 		*p_query_ids = doc->query_ids;

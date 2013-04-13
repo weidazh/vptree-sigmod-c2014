@@ -8,6 +8,8 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 ErrorCode VPTreeQueryRemove(QueryID query_id);
 // ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str);
 ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids);
+ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str);
+void WaitWordResults();
 
 void vptree_system_init();
 void vptree_doc_worker_init();
