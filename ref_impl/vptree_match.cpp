@@ -596,6 +596,7 @@ struct WordRequestResponse {
 
 	struct WordRequestResponse* next;
 	struct WordRequestResponse* resp_next;
+	char __padding[64 - sizeof(std::string) - sizeof(ResultSet*) - 2 * sizeof(struct WordRequestResponse*)];
 };
 
 #if 0
@@ -703,10 +704,14 @@ void* WordSearcher(void* arg) {
 	setThread(WORD_SEARCHER_THREAD, wordSearcher->tid);
 	DELETE(wordSearcher);
 
+	StickToCores(WORD_SEARCHER_THREAD, thread_id, word_searcher_n);
+
 	long long total_hamming_search = 0;
 	long long total_edit_search = 0;
 
-	const int BATCH = 1;
+	const int BATCH = 8;
+
+	int counter = 0;
 
 	pthread_mutex_lock(&reqring->lock);
 	while (! reqring->exiting) {
@@ -783,6 +788,21 @@ REDO:
 		wrr->rs = rs;
 
 		batch --;
+#if 0
+		counter += 1;
+		if (counter % 1024 == 0) {
+			int cpuid = GetCPUID();
+			fprintf(stderr, "%d:%d running on %d\n", thread_type, thread_id, cpuid);
+#if 0
+			cpu_set_t cpuset;
+			pthread_getaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+			for (int j = 0; j < CPU_SETSIZE; j++)
+				if (CPU_ISSET(j, &cpuset))
+					printf("    CPU %d\n", j);
+#endif
+
+		}
+#endif
 		if (batch) {
 			wrr = wrr->next;
 			goto REDO;
@@ -917,38 +937,13 @@ int DivideFrequency(int n) {
 }
 #endif
 
-int GetRingIDofThread(int tid) {
-	return tid % req_ring_n;
-}
-#if ENABLE_AFFINITY_SETTING
-static void StickToCores(pthread_t th, int tid) {
-	int num_cores = sysconf(_SC_NPROCESSORS_ONLN);
-	if (num_cores != N_CORES) {
-		fprintf(stderr, "num_cores != N_CORES\n");
+int GetReqringIDFromWordSearcherID(int tid) {
+	if (word_searcher_n % req_ring_n != 0) {
+		fprintf(stderr, "word_searcher_n %% req_ring_n != 0\n");
 		exit(1);
 	}
-
-	cpu_set_t cpuset;
-	CPU_ZERO(&cpuset);
-	if (req_ring_n == 1)
-		return;
-	else if (req_ring_n == 2 || req_ring_n == 4 || req_ring_n == 8) {
-		// int topo[] = {0, 0, 0, 4, 4, 4, 1, 1, 1, 5, 5, 5, 2, 2, 2, 6, 6, 6, 3, 3, 3, 7, 7, 7};
-		int topo[] = {0, 0, 4, 2, 6, 6, 1, 1, 5, 3, 7, 7, 0, 4, 4, 2, 2, 6, 1, 5, 5, 3, 3, 7};
-		for (int i = 0; i < N_CORES; i++) {
-			if (topo[i] % req_ring_n == tid % req_ring_n) {
-				CPU_SET(i, &cpuset);
-			}
-		}
-	}
-
-	int ret = pthread_setaffinity_np(th, sizeof(cpu_set_t), &cpuset);
-	if (ret < 0) {
-		fprintf(stderr, "cannot set affinity\n");
-		exit(1);
-	}
+	return tid / (word_searcher_n / req_ring_n);
 }
-#endif
 
 void CreateWordSearchers(struct WordRequestResponseRing* ring, int n) {
 	pthread_mutex_lock(&ring->pts_lock);
@@ -957,7 +952,7 @@ void CreateWordSearchers(struct WordRequestResponseRing* ring, int n) {
 		int tid = ring->worker_threads;
 		arg->tid = tid;
 		arg->ring = ring;
-		int reqring_id = GetRingIDofThread(tid);
+		int reqring_id = GetReqringIDFromWordSearcherID(tid);
 		arg->reqring = ring->reqring[reqring_id];
 		int ret_val = pthread_create(&ring->pts[ring->worker_threads],
 				NULL, WordSearcher, arg);
@@ -965,9 +960,6 @@ void CreateWordSearchers(struct WordRequestResponseRing* ring, int n) {
 			perror("Pthread create error!");
 			exit(1);
 		}
-#if ENABLE_AFFINITY_SETTING
-		StickToCores(ring->pts[ring->worker_threads], tid);
-#endif
 		ring->worker_threads += 1;
 	}
 	pthread_mutex_unlock(&ring->pts_lock);
@@ -980,7 +972,8 @@ static int GetReqringToSend(struct WordRequestResponse* request) {
 #endif
 static int GetReqringToSend() {
 	static __thread int round_robin = 0;
-	ASSERT_THREAD(WORD_FEEDER_THREAD, thread_id);
+	// ASSERT_THREAD(WORD_FEEDER_THREAD, thread_id);
+	ASSERT_THREAD(WORD_WAITER_THREAD, thread_id);
 	if (req_ring_n % word_feeder_n != 0) {
 		fprintf(stderr, "(req_ring_n %% word_feeder_n != 0)\n");
 		exit(1);
@@ -1031,7 +1024,20 @@ int word_searcher_n = WORD_SEARCHER_N;
 
 #if 1
 /* This part is called by master thread to presend requests to WordMatcher. */
-std::set<std::string> batch_doc_words;
+struct SET_OF_STRING {
+	std::set<std::string> bylen[MAX_WORD_LENGTH][26];
+	
+	void clear() {
+		for (int i = 0; i < MAX_WORD_LENGTH; i++) {
+			for (int j = 0; j < 26; j++) {
+				this->bylen[i][j].clear();
+			}
+		}
+	}
+	void insert(const std::string& str) {
+		this->bylen[str.length()][str.c_str()[0] - 'a'].insert(str);
+	}
+} batch_doc_words;
 void BuildIndex() {
 	if (new_vptrees_unless_exists()) {
 		// fprintf(logf, "%d:%d Index built\n", thread_type, thread_id);
@@ -1050,8 +1056,10 @@ ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str) {
 #endif
 	ITERATE_QUERY_WORDS(doc_word, doc_str) {
 		std::string doc_word_string = word_to_string(doc_word);
+#if 0
 		if (batch_doc_words.count(doc_word_string))
 			continue;
+#endif
 		batch_doc_words.insert(doc_word_string);
 #if 0
 		WordRequestResponse* request = NEW(WordRequestResponse, );
@@ -1098,8 +1106,14 @@ ErrorCode VPTreeWordFeeder(int word_feeder_id) {
 	const int BATCH = req_enqueue_batch;
 	int batch = 0;
 	WordRequestResponse* last_req = NULL;
-	for (std::set<std::string>::iterator i = batch_doc_words.begin();
-					i != batch_doc_words.end(); i++, j++) {
+	for (int len = 0; len != MAX_WORD_LENGTH; len ++) {
+#if ENABLE_LEN_AWARE_REQRING
+		if (len % word_feeder_n != word_feeder_id)
+			continue;
+	for (int c = 0; c < 26; c++) {
+#endif
+	for (std::set<std::string>::iterator i = batch_doc_words.bylen[len][c].begin();
+					i != batch_doc_words.bylen[len][c].end(); i++, j++) {
 #if ENABLE_LEN_AWARE_REQRING
 		if (i->length() % word_feeder_n != word_feeder_id) {
 			continue;
@@ -1132,7 +1146,7 @@ ErrorCode VPTreeWordFeeder(int word_feeder_id) {
 
 		if (batch >= BATCH) {
 			last_req = SendSearchWordRequest(ring,
-				GetReqringToSend(), request, 0);
+				GetReqringToSend(), request, batch >= REQ_ENQUEUE_BATCH);
 			if (!last_req)
 				batch = 0;
 		}
@@ -1140,6 +1154,8 @@ ErrorCode VPTreeWordFeeder(int word_feeder_id) {
 			last_req = request;
 		}
 #endif
+	}
+	}
 	}
 #if 1
 	if (batch)

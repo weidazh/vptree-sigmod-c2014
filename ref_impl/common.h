@@ -41,8 +41,8 @@ extern int word_feeder_n;
 #define word_waiter_n word_feeder_n
 #define REQ_RING_N 12
 extern int req_ring_n;
-#define ENABLE_LEN_AWARE_REQRING 0
-#define ENABLE_AFFINITY_SETTING 0
+#define ENABLE_LEN_AWARE_REQRING 1
+#define ENABLE_AFFINITY_SETTING 1
 
 #define REQ_RING_POLICY_LEN_MOD 1
 #define REQ_RING_POLICY_ROUND_ROBIN 2
@@ -52,15 +52,12 @@ extern int req_ring_n;
 #define REQ_RING_POLICY REQ_RING_POLICY_ROUND_ROBIN
 #endif
 
-#define REQ_ENQUEUE_BATCH 2
+#define REQ_ENQUEUE_BATCH 1
 extern int req_enqueue_batch;
-#define MAX_THREADS (1 + DOC_WORKER_N + WORD_SEARCHER_N + WORD_FEEDER_N + WORD_WAITER_N)
+#define MAX_THREADS (1 + DOC_WORKER_N + WORD_SEARCHER_N + WORD_WAITER_N)
 
 #if ENABLE_LEN_AWARE_REQRING && REQ_ENQUEUE_BATCH != 1
 #error "ENABLE_LEN_AWARE_REQRING && REQ_ENQUEUE_BATCH != 1"
-#endif
-#if ! ENABLE_LEN_AWARE_REQRING && ENABLE_AFFINITY_SETTING
-#error "! ENABLE_LEN_AWARE_REQRING && ENABLE_AFFINITY_SETTING"
 #endif
 
 #define N_CORES 24
@@ -68,7 +65,7 @@ extern int req_enqueue_batch;
 #define MASTER_THREAD 1
 #define DOC_WORKER_THREAD 2
 #define WORD_SEARCHER_THREAD 3
-#define WORD_FEEDER_THREAD 4
+// #define WORD_FEEDER_THREAD 4
 #define WORD_WAITER_THREAD 5
 extern __thread int thread_type;
 extern __thread int thread_id;
@@ -83,10 +80,10 @@ static inline void setThread(int type, int id) {
 		thread_sid = id + 1;
 	else if (type == WORD_SEARCHER_THREAD)
 		thread_sid = 1 + doc_worker_n + id;
-	else if (type == WORD_FEEDER_THREAD)
-		thread_sid = 1 + doc_worker_n + word_searcher_n + id;
+	// else if (type == WORD_FEEDER_THREAD)
+	// 	thread_sid = 1 + doc_worker_n + word_searcher_n + id;
 	else if (type == WORD_WAITER_THREAD)
-		thread_sid = 1 + doc_worker_n + word_searcher_n + word_feeder_n + id;
+		thread_sid = 1 + doc_worker_n + word_searcher_n + id;
 	else {
 		fprintf(logf, "Unknwon thread type %d\n", type);
 		exit(1);

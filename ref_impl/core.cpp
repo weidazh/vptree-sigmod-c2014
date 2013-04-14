@@ -198,11 +198,11 @@ int CreateThread();
 void KillThreads();
 
 void setPhase(int phase_to_be) {
-	static const char* PROG = " -/|\\-/|\\-/|\\          ";
+	static const char* PROG = " 123456789abcdefghijklmnop";
 	static int progbar = 0;
 	if (phase == 0 && hku) {
 		progbar = 1;
-		fprintf(logf, "\n.");
+		fprintf(logf, "\n\n.");
 	}
 	phase = phase_to_be;
 	if (phase_to_be == PHASE_SERIAL)
@@ -221,7 +221,6 @@ ErrorCode InitializeIndex(){
 		hku = 1;
 		logf = stderr;
 	}
-	setPhase(PHASE_SERIAL);
 
 
 	char* env_doc_worker_n;
@@ -241,6 +240,7 @@ ErrorCode InitializeIndex(){
 	vptree_system_init();
 	fprintf(logf, "doc_worker_n = %d\n", doc_worker_n);
 
+	setPhase(PHASE_SERIAL);
 	while ( CreateThread() != -1);
 	srand(time(NULL));
 
@@ -345,6 +345,7 @@ void* MTWorker(void* arg) {
 	DELETE(MTWorkerArg);
 
 	setThread(DOC_WORKER_THREAD, tid);
+	StickToCores(DOC_WORKER_THREAD, thread_id, doc_worker_n);
 
 	thread_fprintf(logf, "MTWorker[%d] starting\n", tid);
 	vptree_doc_worker_init();
@@ -482,6 +483,7 @@ ErrorCode MTVPTreeMatchDocument(DocID doc_id, const char* doc_str)
 	char* cur_doc_str = (char*) MALLOC(strlen(doc_str) + 1);
 	strcpy(cur_doc_str, doc_str); // FIXME: Who is freeing it?
 
+	// enqueue
 	VPTreeMasterMatchDocument(doc_id, doc_str);
 
 	thread_fprintf(logf, "MasterThread: doc %d comes\n", doc_id);
@@ -562,32 +564,22 @@ void WaitDocumentResults() {
 int barriers_init_ed = 0;
 pthread_barrier_t feeder_start_barr;
 pthread_barrier_t feeder_end_barr;
-struct FeederThreadArg {
-	int feeder_id;
-	FeederThreadArg(int id): feeder_id(id) {}
+pthread_barrier_t waiter_start_barr;
+pthread_barrier_t waiter_end_barr;
+struct WordFeederWaiterArg {
+	int waiter_id;
+	WordFeederWaiterArg(int id): waiter_id(id) {}
 };
-void* feeder_thread(void* arg) {
-	int id = ((FeederThreadArg*)arg)->feeder_id;
-	setThread(WORD_FEEDER_THREAD, id);
+void* feeder_waiter_thread(void* arg) {
+	int id = ((WordFeederWaiterArg*)arg)->waiter_id;
+	// setThread(WORD_FEEDER_THREAD, id);
+	setThread(WORD_WAITER_THREAD, id);
+	StickToCores(WORD_WAITER_THREAD, id, word_feeder_n);
 	while (true) {
 		pthread_barrier_wait(&feeder_start_barr);
 		VPTreeWordFeeder(id);
 		pthread_barrier_wait(&feeder_end_barr);
-	}
-	pthread_exit(NULL);
-	return NULL;
-}
 
-pthread_barrier_t waiter_start_barr;
-pthread_barrier_t waiter_end_barr;
-struct WordWaiterArg {
-	int waiter_id;
-	WordWaiterArg(int id): waiter_id(id) {}
-};
-void* waiter_thread(void* arg) {
-	int id = ((WordWaiterArg*)arg)->waiter_id;
-	setThread(WORD_WAITER_THREAD, id);
-	while (true) {
 		pthread_barrier_wait(&waiter_start_barr);
 		WaitWordResults(id);
 		pthread_barrier_wait(&waiter_end_barr);
@@ -604,13 +596,9 @@ void CreateFeederWaiterThreads() {
 	pthread_barrier_init(&feeder_end_barr, NULL, 1 + word_feeder_n);
 	pthread_barrier_init(&waiter_start_barr, NULL, 1 + word_waiter_n);
 	pthread_barrier_init(&waiter_end_barr, NULL, 1 + word_waiter_n);
-	pthread_t feeder_threads[word_feeder_n];
-	for (int i = 0; i < word_feeder_n; i++) {
-		pthread_create(&feeder_threads[i], NULL, feeder_thread, NEW(FeederThreadArg, i));
-	}
 	pthread_t waiter_threads[word_waiter_n];
 	for (int i = 0; i < word_waiter_n; i++) {
-		pthread_create(&waiter_threads[i], NULL, waiter_thread, NEW(WordWaiterArg, i));
+		pthread_create(&waiter_threads[i], NULL, feeder_waiter_thread, NEW(WordFeederWaiterArg, i));
 	}
 	barriers_init_ed = 1;
 }

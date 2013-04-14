@@ -3,8 +3,8 @@
 
 #include "common.h"
 
-#define ENABLE_STATIC_MALLOC 0
-#define ENABLE_ALLOW_MEM_LEAK 0
+#define ENABLE_STATIC_MALLOC 1
+#define ENABLE_ALLOW_MEM_LEAK 1
 
 #define SIZE_BSS (1 /* G */ * 1024 * 1024 * 1024)
 #if ENABLE_STATIC_MALLOC
@@ -13,7 +13,9 @@ extern __thread long offset;
 
 static inline void* static_malloc(size_t size) {
 	long local_offset = offset;
-	offset += size;
+	if (local_offset % 64 != 0)
+		local_offset = local_offset - local_offset % 64 + 64;
+	offset = local_offset + size;
 	if (thread_sid >= MAX_THREADS) {
 		fprintf(logf, "ERROR BSS thread_sid overflow\n");
 		return NULL;
@@ -54,5 +56,6 @@ static inline void static_free(void* var) {
 #define DELETE(x) (delete x)
 #endif
 
-
+int GetCPUID();
+void StickToCores(int type, int tid, int max);
 #endif
