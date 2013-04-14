@@ -64,10 +64,10 @@ struct mystring {
 
 	mystring() : c_string(NULL) {
 		if(sizeof(struct mystring) != 32) {
-			fprintf(stderr, "(sizeof(struct mystring) %d != 32)\n", sizeof(struct mystring));
+			fprintf(stderr, "(sizeof(struct mystring) %lu != 32)\n", sizeof(struct mystring));
 			// fprintf(stderr, "sizeof(padding) %d\n", sizeof(__padding));
-			fprintf(stderr, "offset(len) %d\n", (char*)&this->len - (char*)this);
-			fprintf(stderr, "offset(c_string) %d\n", (char*)&this->c_string - (char*)this);
+			fprintf(stderr, "offset(len) %ld\n", (char*)&this->len - (char*)this);
+			fprintf(stderr, "offset(c_string) %ld\n", (char*)&this->c_string - (char*)this);
 			// fprintf(stderr, "offset(__padding) %d\n", (char*)&this->__padding - (char*)this);
 			exit(1);
 		}
@@ -89,7 +89,7 @@ struct mystring {
 		// 'z' = 0x7a    0111 1010
 		// c & 0x
 #define NULL_TO_CHAR 26
-#define PER_DIMENSION 27
+#define PER_DIMENSION 32
 		for (i = 0, j = 0; i < len; i += 3, j ++) {
 			int c = w[i] - 'a';
 			int d = i + 1 < len ? w[i + 1] - 'a' : NULL_TO_CHAR;
@@ -153,7 +153,9 @@ typedef std::string mystring;
 #endif
 
 #define ENABLE_HALFSTRING 0
-#ifdef ENABLE_HALFSTRING
+#define ENABLE_HALFSTRING_HAMMING 1
+#if ENABLE_HALFSTRING
+
 static inline int min2(int v, int b) {
 	if (v < b)
 		return v;
@@ -207,21 +209,25 @@ static int EditDistanceH(const unsigned char* a, int na, const unsigned char* b,
 		return EditDistanceCoreH(a, na, b, nb);
 	}
 }
+#endif
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
+#if ENABLE_HALFSTRING_HAMMING
 // Computes Hamming distance between a null-terminated string "a" with length "na"
 //  and a null-terminated string "b" with length "nb" 
-static unsigned int HammingDistanceH(const unsigned char* a, int na, const unsigned char* b, int nb)
+static unsigned int HammingDistanceH(const unsigned short* a, int na, const unsigned short* b, int nb)
 {
 	int j, oo=0x7FFFFFFF;
 	if(na!=nb) return oo;
 	
 	unsigned int num_mismatches=0;
-	for(j = 0; j < na; j++) {
-		unsigned char c = a[j] /* xor */ ^ b[j];
-		if(c & 0xf0)
+	for(j = 0; j < (na + 2)/ 3; j++) {
+		unsigned short c = a[j] /* xor */ ^ b[j];
+		if(c & 0x001f)
 			num_mismatches++;
-		if(c & 0x0f)
+		if(c & 0x03e0)
+			num_mismatches++;
+		if(c & 0x7c00)
 			num_mismatches++;
 	}
 	
@@ -233,7 +239,7 @@ static unsigned int HammingDistanceH(const unsigned char* a, int na, const unsig
 
 int hamming(const mystring& a, const mystring& b) {
 	unsigned int oo = 0x7FFFFFFF;
-#if ENABLE_HALFSTRING
+#if ENABLE_HALFSTRING_HAMMING
 	unsigned int dist = HammingDistanceH(a.half_str(), a.length(), b.half_str(), b.length());
 #else
 	unsigned int dist = HammingDistance(a.c_str(), a.length(), b.c_str(), b.length());
