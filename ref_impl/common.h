@@ -14,6 +14,7 @@ struct stats {
 	long long total_enqueuing;
 
 	long long total_wait;
+	long long total_feed;
 	long long total_words_wait;
 	long long total_docs_wait;
 	long long total_docs_wait_small;
@@ -34,17 +35,41 @@ extern FILE* logf;
 extern int doc_worker_n;
 #define WORD_SEARCHER_N 24
 extern int word_searcher_n;
+#define WORD_FEEDER_N 4
+#define WORD_WAITER_N WORD_FEEDER_N
+extern int word_feeder_n;
+#define word_waiter_n word_feeder_n
 #define REQ_RING_N 12
 extern int req_ring_n;
+#define ENABLE_LEN_AWARE_REQRING 0
+#define ENABLE_AFFINITY_SETTING 0
+
+#define REQ_RING_POLICY_LEN_MOD 1
+#define REQ_RING_POLICY_ROUND_ROBIN 2
+#if ENABLE_LEN_AWARE_REQRING
+#define REQ_RING_POLICY REQ_RING_POLICY_LEN_MOD
+#else
+#define REQ_RING_POLICY REQ_RING_POLICY_ROUND_ROBIN
+#endif
+
 #define REQ_ENQUEUE_BATCH 2
 extern int req_enqueue_batch;
-#define MAX_THREADS (1 + DOC_WORKER_N + WORD_SEARCHER_N)
+#define MAX_THREADS (1 + DOC_WORKER_N + WORD_SEARCHER_N + WORD_FEEDER_N + WORD_WAITER_N)
+
+#if ENABLE_LEN_AWARE_REQRING && REQ_ENQUEUE_BATCH != 1
+#error "ENABLE_LEN_AWARE_REQRING && REQ_ENQUEUE_BATCH != 1"
+#endif
+#if ! ENABLE_LEN_AWARE_REQRING && ENABLE_AFFINITY_SETTING
+#error "! ENABLE_LEN_AWARE_REQRING && ENABLE_AFFINITY_SETTING"
+#endif
 
 #define N_CORES 24
 
 #define MASTER_THREAD 1
 #define DOC_WORKER_THREAD 2
 #define WORD_SEARCHER_THREAD 3
+#define WORD_FEEDER_THREAD 4
+#define WORD_WAITER_THREAD 5
 extern __thread int thread_type;
 extern __thread int thread_id;
 extern __thread int thread_sid; /* serialized id, master 0, doc worker 1, doc worker 2, etc*/
@@ -58,6 +83,10 @@ static inline void setThread(int type, int id) {
 		thread_sid = id + 1;
 	else if (type == WORD_SEARCHER_THREAD)
 		thread_sid = 1 + doc_worker_n + id;
+	else if (type == WORD_FEEDER_THREAD)
+		thread_sid = 1 + doc_worker_n + word_searcher_n + id;
+	else if (type == WORD_WAITER_THREAD)
+		thread_sid = 1 + doc_worker_n + word_searcher_n + word_feeder_n + id;
 	else {
 		fprintf(logf, "Unknwon thread type %d\n", type);
 		exit(1);
@@ -66,19 +95,20 @@ static inline void setThread(int type, int id) {
 	thread_id = id;
 	// fprintf(stderr, "New thread %d:%d:%d\n", thread_type, thread_id, thread_sid);
 }
-#define PHRASE_SERIAL 1 /* Input/Output */ 
-#define PHRASE_INDEX 2
-#define PHRASE_ENQUEUE 3
-#define PHRASE_WAIT_WORDS 4
-#define PHRASE_WAIT_DOCS 5
-extern int phrase;
+#define PHASE_SERIAL 1 /* Input/Output */
+#define PHASE_INDEX 2
+#define PHASE_ENQUEUE 3
+#define PHASE_FEED_WORDS 6
+#define PHASE_WAIT_WORDS 4
+#define PHASE_WAIT_DOCS 5
+extern int phase;
 extern int hku;
 
-#define ASSERT_PHRASE(asserted_phrase) \
-	if (phrase != (asserted_phrase)) { \
-		fprintf(stderr, "%d:%d-%d ERROR not in phrase %d %s:L%d\n", \
-				thread_type, thread_id, phrase, \
-				asserted_phrase, __FILE__, __LINE__); \
+#define ASSERT_PHASE(asserted_phase) \
+	if (phase != (asserted_phase)) { \
+		fprintf(stderr, "%d:%d-%d ERROR not in phase %d %s:L%d\n", \
+				thread_type, thread_id, phase, \
+				asserted_phase, __FILE__, __LINE__); \
 	}
 
 #define ASSERT_THREAD(type, id) \

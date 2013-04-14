@@ -43,8 +43,8 @@ __thread int thread_id;
 __thread int thread_type;
 __thread int thread_sid;
 __thread long long thread_total_resultmerging;
-int phrase;
-int n_phrases = 0;
+int phase;
+int n_phases = 0;
 int hku = 0;
 FILE* logf = stdout;
 // Then `Threads create' is threadsPool.n
@@ -197,21 +197,21 @@ struct ThreadsPool threadsPool;
 int CreateThread();
 void KillThreads();
 
-void setPhrase(int phrase_to_be) {
-	static const char* PROG = "  -/|\\";
+void setPhase(int phase_to_be) {
+	static const char* PROG = " -/|\\-/|\\-/|\\          ";
 	static int progbar = 0;
-	if (phrase == 0 && hku) {
+	if (phase == 0 && hku) {
 		progbar = 1;
 		fprintf(logf, "\n.");
 	}
-	phrase = phrase_to_be;
-	if (phrase_to_be == 1)
-		n_phrases += 1;
+	phase = phase_to_be;
+	if (phase_to_be == PHASE_SERIAL)
+		n_phases += 1;
 	if (progbar) {
-		if (n_phrases % 8 == 0 && phrase_to_be == 1) {
+		if (n_phases % 8 == 0 && phase_to_be == PHASE_SERIAL) {
 			fprintf(logf, "\b..");
 		}
-		fprintf(logf, "\b%c", PROG[phrase_to_be]);
+		fprintf(logf, "\b%c", PROG[phase_to_be]);
 	}
 }
 
@@ -221,7 +221,7 @@ ErrorCode InitializeIndex(){
 		hku = 1;
 		logf = stderr;
 	}
-	setPhrase(PHRASE_SERIAL);
+	setPhase(PHASE_SERIAL);
 
 
 	char* env_doc_worker_n;
@@ -263,17 +263,18 @@ ErrorCode DestroyIndex(){
 	KillThreads();
 	vptree_system_destroy();
 
-	fprintf(logf, "n_phrases %d\n", n_phrases);
+	fprintf(logf, "n_phases %d\n", n_phases);
 	fprintf(logf, "\n");
 	fprintf(logf, SHOW_STATS("master index", stats.total_master_indexing));
 	fprintf(logf, SHOW_STATS("  indexing", stats.total_indexing));
 	fprintf(logf, SHOW_STATS("  indexing2", stats.total_indexing_and_query_adding));
 	fprintf(logf, SHOW_STATS("enqueue", stats.total_enqueuing));
 	fprintf(logf, SHOW_STATS("wait", stats.total_wait));
+	fprintf(logf, SHOW_STATS("  feed", stats.total_feed));
 	fprintf(logf, SHOW_STATS("  words", stats.total_words_wait));
-	fprintf(logf, "    (words + enqueue) %lld.%06lld\n",
-		(stats.total_words_wait + stats.total_enqueuing)/1000000LL,
-		(stats.total_words_wait + stats.total_enqueuing)%1000000LL);
+	fprintf(logf, "    (words + feed + enqueue) %lld.%06lld\n",
+		(stats.total_words_wait + stats.total_feed + stats.total_enqueuing)/1000000LL,
+		(stats.total_words_wait + stats.total_feed + stats.total_enqueuing)%1000000LL);
 	fprintf(logf, SHOW_STATS("  docs ", stats.total_docs_wait));
 	fprintf(logf, SHOW_STATS("    (last half)", stats.total_docs_wait_small));
 	fprintf(logf, SHOW_STATS("    merge", stats.total_resultmerging));
@@ -499,7 +500,7 @@ ErrorCode MTVPTreeMatchDocument(DocID doc_id, const char* doc_str)
 	// pthread_cond_signal(&threadsPool.cond, &threadsPool.lock);
 	pthread_mutex_unlock(&threadsPool.lock);
 #if 0
-	// FIXME!!!! I forgot to lock this before ? 
+	// FIXME!!!! I forgot to lock this before ?
 	n = FindThreadAndMoveBack(1);
 	threadsPool.rr[n].doc_id = doc_id;
 	threadsPool.rr[n].doc_str = cur_doc_str;
@@ -524,9 +525,9 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 	if (threadsPool.in_flight == 0) {
 		stats.total_serial += GetClockTimeInUS() - stats.start_serial;
 		long long start = GetClockTimeInUS();
-		setPhrase(PHRASE_INDEX);
+		setPhase(PHASE_INDEX);
 		BuildIndex();
-		setPhrase(PHRASE_ENQUEUE);
+		setPhase(PHASE_ENQUEUE);
 		stats.total_master_indexing += GetClockTimeInUS() - start;
 		stats.start_enqueuing = GetClockTimeInUS();
 	}
@@ -558,22 +559,90 @@ void WaitDocumentResults() {
 	}
 }
 
+int barriers_init_ed = 0;
+pthread_barrier_t feeder_start_barr;
+pthread_barrier_t feeder_end_barr;
+struct FeederThreadArg {
+	int feeder_id;
+	FeederThreadArg(int id): feeder_id(id) {}
+};
+void* feeder_thread(void* arg) {
+	int id = ((FeederThreadArg*)arg)->feeder_id;
+	setThread(WORD_FEEDER_THREAD, id);
+	while (true) {
+		pthread_barrier_wait(&feeder_start_barr);
+		VPTreeWordFeeder(id);
+		pthread_barrier_wait(&feeder_end_barr);
+	}
+	pthread_exit(NULL);
+	return NULL;
+}
+
+pthread_barrier_t waiter_start_barr;
+pthread_barrier_t waiter_end_barr;
+struct WordWaiterArg {
+	int waiter_id;
+	WordWaiterArg(int id): waiter_id(id) {}
+};
+void* waiter_thread(void* arg) {
+	int id = ((WordWaiterArg*)arg)->waiter_id;
+	setThread(WORD_WAITER_THREAD, id);
+	while (true) {
+		pthread_barrier_wait(&waiter_start_barr);
+		WaitWordResults(id);
+		pthread_barrier_wait(&waiter_end_barr);
+	}
+	pthread_exit(NULL);
+	return NULL;
+}
+
+void CreateFeederWaiterThreads() {
+	if (barriers_init_ed) {
+		return;
+	}
+	pthread_barrier_init(&feeder_start_barr, NULL, 1 + word_feeder_n);
+	pthread_barrier_init(&feeder_end_barr, NULL, 1 + word_feeder_n);
+	pthread_barrier_init(&waiter_start_barr, NULL, 1 + word_waiter_n);
+	pthread_barrier_init(&waiter_end_barr, NULL, 1 + word_waiter_n);
+	pthread_t feeder_threads[word_feeder_n];
+	for (int i = 0; i < word_feeder_n; i++) {
+		pthread_create(&feeder_threads[i], NULL, feeder_thread, NEW(FeederThreadArg, i));
+	}
+	pthread_t waiter_threads[word_waiter_n];
+	for (int i = 0; i < word_waiter_n; i++) {
+		pthread_create(&waiter_threads[i], NULL, waiter_thread, NEW(WordWaiterArg, i));
+	}
+	barriers_init_ed = 1;
+}
+
 void WaitResults() {
 	long long start = GetClockTimeInUS();
 
-	setPhrase(PHRASE_WAIT_WORDS);
-	WaitWordResults();
+	CreateFeederWaiterThreads();
 
+	setPhase(PHASE_FEED_WORDS);
+	pthread_barrier_wait(&feeder_start_barr);
+	// feed
+	pthread_barrier_wait(&feeder_end_barr);
+
+	long long after_feed = GetClockTimeInUS();
+
+	setPhase(PHASE_WAIT_WORDS);
+	pthread_barrier_wait(&waiter_start_barr);
+	// wait word to finish
+	pthread_barrier_wait(&waiter_end_barr);
+	MasterMergeCache();
 	long long mid = GetClockTimeInUS();
 
-	setPhrase(PHRASE_WAIT_DOCS);
+	setPhase(PHASE_WAIT_DOCS);
 	WaitDocumentResults();
 
-	setPhrase(PHRASE_SERIAL);
+	setPhase(PHASE_SERIAL);
 
 	long long end = GetClockTimeInUS();
 	stats.total_wait += (end - start);
-	stats.total_words_wait += (mid - start);
+	stats.total_feed += (after_feed - start);
+	stats.total_words_wait += (mid - after_feed);
 	stats.total_docs_wait += (end - mid);
 }
 

@@ -10,7 +10,9 @@ ErrorCode VPTreeQueryRemove(QueryID query_id);
 ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids);
 void BuildIndex();
 ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str);
-void WaitWordResults();
+ErrorCode VPTreeWordFeeder(int word_feeder_id);
+void WaitWordResults(int waiter_id);
+void MasterMergeCache();
 
 void vptree_system_init();
 void vptree_doc_worker_init();

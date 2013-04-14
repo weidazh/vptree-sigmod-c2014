@@ -24,10 +24,11 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 #define I2P(x) (&(*(x)))
 
 #define ENABLE_RESULT_CACHE 1
-#define ENABLE_THREAD_RESULT_CACHE 0
+#define ENABLE_THREAD_RESULT_CACHE 1
+#define ENABLE_WAITER_LOCAL_CACHE 1
 #define ENABLE_GLOBAL_RESULT_CACHE 1
 
-#define ENABLE_MULTI_EDITVPTREE 0
+#define ENABLE_MULTI_EDITVPTREE 1
 #define ENABLE_SEPARATE_EDIT123 1
 
 typedef int WordIDType;
@@ -205,8 +206,9 @@ typedef std::map<std::string, ResultSet*> ResultCache;
 ResultCache resultCache;
 #endif
 #if ENABLE_THREAD_RESULT_CACHE
-ResultCache __threadResultCache[DOC_WORKER_N];
-__thread ResultCache* threadResultCache;
+const int thread_result_cache_n = WORD_FEEDER_N;
+ResultCache __threadResultCache[WORD_FEEDER_N];
+__thread ResultCache* threadResultCache = NULL;
 #endif
 #endif
 
@@ -256,7 +258,7 @@ static int new_vptrees_unless_exists() {
 			}
 		}
 		// pthread_rwlock_rdlock(&wordMapLock);
-		ASSERT_PHRASE(PHRASE_INDEX);
+		ASSERT_PHASE(PHASE_INDEX);
 		for(std::map<std::string, Word*>::iterator i = wordMap.begin();
 			i != wordMap.end(); i++) {
 
@@ -278,7 +280,6 @@ static int new_vptrees_unless_exists() {
 				}
 			}
 #endif
-			
 #else
 			if (w->hasEdit())
 				editWordList[0].push_back(i->first);
@@ -296,7 +297,7 @@ static int new_vptrees_unless_exists() {
 #endif
 
 #if ENABLE_MULTI_EDITVPTREE
-			fprintf(stderr, "LEN ed=%d ", ed);
+			// fprintf(stderr, "LEN ed=%d ", ed);
 			for (int i = 1; i <= MAX_WORD_LENGTH; i++) {
 				std::vector<std::string> editWordList2;
 				for (std::vector<std::string>::iterator j = editWordList[ed].begin();
@@ -305,10 +306,10 @@ static int new_vptrees_unless_exists() {
 					if (i - ed <= len && len <= i + ed)
 						editWordList2.push_back(*j);
 				}
-				fprintf(stderr, "%d ", editWordList2.size());
+				// fprintf(stderr, "%d ", editWordList2.size());
 				edit_vptree[ed][i]->create(editWordList2);
 			}
-			fprintf(stderr, "\n");
+			// fprintf(stderr, "\n");
 #else
 			edit_vptree[ed][0]->create(editWordList[ed]);
 #endif
@@ -320,7 +321,7 @@ static int new_vptrees_unless_exists() {
 #if ENABLE_RESULT_CACHE
 #if ENABLE_GLOBAL_RESULT_CACHE
 		ASSERT_THREAD(MASTER_THREAD, 0);
-		ASSERT_PHRASE(PHRASE_INDEX);
+		ASSERT_PHASE(PHASE_INDEX);
 		// pthread_rwlock_wrlock(&resultCacheLock);
 		for(ResultCache::iterator i = resultCache.begin();
 			i != resultCache.end();
@@ -331,7 +332,7 @@ static int new_vptrees_unless_exists() {
 		// pthread_rwlock_unlock(&resultCacheLock);
 #endif
 #if ENABLE_THREAD_RESULT_CACHE
-		for (int i = 0; i < doc_worker_n; i++) {
+		for (int i = 0; i < thread_result_cache_n; i++) {
 			__threadResultCache[i].clear();
 		}
 #endif
@@ -355,7 +356,7 @@ static int clear_vptrees() {
 		return 0;
 
 	if (hamming_vptree) {
-		long long now = GetClockTimeInUS();
+		// long long now = GetClockTimeInUS();
 		// fprintf(logf, "[%lld.%06lld] start of indexing\n", now / 1000000LL % 86400, now % 1000000LL);
 		stats.start_indexing_and_query_adding = GetClockTimeInUS();
 		DELETE(hamming_vptree);
@@ -387,7 +388,7 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 	ITERATE_QUERY_WORDS(query_word, query_str) {
 		std::string query_word_string = word_to_string(query_word);
 		// pthread_rwlock_wrlock(&wordMapLock);
-		ASSERT_PHRASE(PHRASE_SERIAL);
+		ASSERT_PHASE(PHASE_SERIAL);
 		ASSERT_THREAD(MASTER_THREAD, 0);
 		WordMap::iterator found = wordMap.find(query_word_string);
 		Word* word;
@@ -433,7 +434,7 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 	ITERATE_QUERY_WORDS(query_word, query->getQueryStr()) {
 		std::string query_word_string = word_to_string(query_word);
 		// pthread_rwlock_wrlock(&wordMapLock);
-		ASSERT_PHRASE(PHRASE_SERIAL);
+		ASSERT_PHASE(PHASE_SERIAL);
 		ASSERT_THREAD(MASTER_THREAD, 0);
 		WordMap::iterator word_found = wordMap.find(query_word_string);
 		if (word_found == wordMap.end()) {
@@ -543,7 +544,7 @@ ResultSet* findCachedResult(std::string doc_word_string) {
 	ResultSet* rs = NULL;
 #if ENABLE_RESULT_CACHE
 	ResultCache::iterator found;
-#if ENABLE_THREAD_RESULT_CACHE
+#if 0 && ENABLE_THREAD_RESULT_CACHE // I have changed the meaning of THREAD_RESULT_CACHE to WORD_WAITER's cache
 	found = threadResultCache->find(doc_word_string);
 	if(found != threadResultCache->end()) {
 		rs = found->second;
@@ -551,7 +552,7 @@ ResultSet* findCachedResult(std::string doc_word_string) {
 	}
 #endif
 #if ENABLE_GLOBAL_RESULT_CACHE
-	// ASSERT_PHRASE(PHRASE_WAIT_DOCS); OR ASSERT_PHRASE(PHRASE_ENQUEUE)
+	// ASSERT_PHASE(PHASE_WAIT_DOCS); OR ASSERT_PHASE(PHASE_ENQUEUE)
 	// pthread_rwlock_rdlock(&resultCacheLock);
 	found = resultCache.find(doc_word_string);
 
@@ -658,8 +659,8 @@ struct WordRequestRing {
 };
 struct WordRequestResponseRing {
 	WordRequestRing* reqring[REQ_RING_N];
-	WordRequestResponse* resphead;
-	WordRequestResponse* resptail;
+	WordRequestResponse* resphead[WORD_FEEDER_N];
+	WordRequestResponse* resptail[WORD_FEEDER_N];
 	// WordResponseRing* respring[WORD_SEARCHER_N];
 	int worker_threads;
 	pthread_t pts[WORD_SEARCHER_N];
@@ -678,6 +679,9 @@ struct WordRequestResponseRing {
 			reqring[i] = NEW(WordRequestRing, i);
 		pthread_mutex_init(&resplock, NULL);
 		pthread_cond_init(&respcond, NULL);
+		for (int i = 0; i < WORD_FEEDER_N; i++) {
+			resphead[i] = resptail[i] = NULL;
+		}
 		// for (int i = 0; i < DOC_WORKER_N; i++)
 		// 	respring[i] = NEW(WordResponseRing, i);
 	}
@@ -690,14 +694,18 @@ struct WordSearcherArg {
 };
 void* WordSearcher(void* arg) {
 	WordSearcherArg* wordSearcher = (WordSearcherArg*)arg;
-	struct WordRequestResponseRing* ring = (struct WordRequestResponseRing*)wordSearcher->ring;
-	struct WordRequestRing* reqring = (struct WordRequestRing*)wordSearcher->reqring;
+	struct WordRequestResponseRing* ring = wordSearcher->ring;
+	struct WordRequestRing* reqring = wordSearcher->reqring;
 	setThread(WORD_SEARCHER_THREAD, wordSearcher->tid);
 	DELETE(wordSearcher);
+
+	long long total_hamming_search = 0;
+	long long total_edit_search = 0;
+
 	pthread_mutex_lock(&reqring->lock);
 	while (! reqring->exiting) {
 		while (reqring->head == NULL && !reqring->exiting) {
-			thread_fprintf(logf, "%d:%d waiting new_req /%d\n", thread_type, thread_id, reqring_id);
+			thread_fprintf(logf, "%d:%d waiting new_req /%d\n", thread_type, thread_id, reqring->ring_id);
 			pthread_cond_wait(&reqring->new_req, &reqring->lock);
 		}
 		if (reqring->exiting)
@@ -724,15 +732,18 @@ void* WordSearcher(void* arg) {
 		ResultSet* rs = NEW(ResultSet, );
 		if (1) {
 			std::vector<std::string> results[TAU];
+			long long start = GetClockTimeInUS();
 			hamming_vptree->search(doc_word_string, TAU, results);
 			for (int i = 0; i < TAU; i++) {
 				rs->results_hamming[i] = do_union_y(&results[i]);
 			}
+			total_hamming_search += GetClockTimeInUS() - start;
 		}
 		thread_fprintf(logf, "%d:%d got new_req\n", thread_type, thread_id);
 
 		if (1) {
 			std::vector<std::string> results[TAU];
+			long long start = GetClockTimeInUS();
 #if ENABLE_SEPARATE_EDIT123
 			for (int ed = 1; ed < TAU; ed ++) {
 				int tau = ed  + 1;
@@ -750,6 +761,7 @@ void* WordSearcher(void* arg) {
 			for (int i = 0; i < TAU; i++) {
 				rs->results_edit[i] = do_union_y(&results[i]);
 			}
+			total_edit_search += GetClockTimeInUS() - start;
 		}
 		wrr->rs = rs;
 #if 0
@@ -777,7 +789,8 @@ void* WordSearcher(void* arg) {
 		if (reqring->head == reqring->tail) {
 			// fprintf(logf, "signaling respcond of %s\n", doc_word_string.c_str());
 			pthread_mutex_lock(&ring->resplock);
-			pthread_cond_signal(&ring->respcond);
+			pthread_cond_broadcast(&ring->respcond);
+			// FIXME: use multiple singals instead
 			pthread_mutex_unlock(&ring->resplock);
 		}
 	}
@@ -786,8 +799,11 @@ void* WordSearcher(void* arg) {
 	global_perf_counter_hamming += perf_counter_hamming;
 	global_perf_counter_edit += perf_counter_edit;
 	pthread_mutex_unlock(&global_counter_lock);
-	fprintf(logf, "h/e %d:%02d %lldM/%lldM\n", thread_type, thread_id,
-			perf_counter_hamming/1000000LL, perf_counter_edit/1000000LL);
+	ASSERT_THREAD(WORD_SEARCHER_THREAD, thread_id);
+	fprintf(logf, "h/e w:%02d %lldM/%lldM %lld.%06llds/%lld.%06llds\n", thread_id,
+			perf_counter_hamming/1000000LL, perf_counter_edit/1000000LL,
+			total_hamming_search/1000000LL, total_hamming_search%1000000LL,
+			total_edit_search/1000000LL, total_edit_search%1000000LL);
 	perf_counter_hamming = 0;
 	perf_counter_edit = 0;
 	pthread_exit(NULL);
@@ -929,36 +945,52 @@ void CreateWordSearchers(struct WordRequestResponseRing* ring, int n) {
 	pthread_mutex_unlock(&ring->pts_lock);
 
 }
+#if 0
 static int GetReqringToSend(struct WordRequestResponse* request) {
 	return request->doc_word_string.length() % req_ring_n;
 }
+#endif
 static int GetReqringToSend() {
 	static __thread int round_robin = 0;
-	round_robin = (round_robin + 1) % req_ring_n;
-	return round_robin;
+	ASSERT_THREAD(WORD_FEEDER_THREAD, thread_id);
+	if (req_ring_n % word_feeder_n != 0) {
+		fprintf(stderr, "(req_ring_n %% word_feeder_n != 0)\n");
+		exit(1);
+	}
+	round_robin = (round_robin + 1) % (req_ring_n / word_feeder_n);
+	return round_robin * (req_ring_n / word_waiter_n) + thread_id;
 }
 static struct WordRequestResponse* SendSearchWordRequest(struct WordRequestResponseRing* ring,
+			int reqring_id,
 			struct WordRequestResponse* request, int must) {
 
+#if 0
 #if REQ_ENQUEUE_BATCH == 1
 	int reqring_id = GetReqringToSend(request);
 #else
 	int reqring_id = GetReqringToSend();
 #endif
+#endif
 	WordRequestRing* reqring = ring->reqring[reqring_id];
 
-	if ((!must && pthread_mutex_trylock(&reqring->lock) == 0) ||
-            (must && pthread_mutex_lock(&reqring->lock) == 0)) {
-		/* linked list, now no req limitation */
-		reqring->append(request);
-		thread_fprintf(logf, "%d:%d sending new_req to /%d\n", thread_type, thread_id, reqring_id);
-		pthread_cond_signal(&reqring->new_req);
-		pthread_mutex_unlock(&reqring->lock);
-		return NULL;
+#if 1
+	if (!must) {
+		if (pthread_mutex_trylock(&reqring->lock) != 0)
+			return request;
 	}
-	else {
-		return request;
+#endif
+
+	if (must) {
+		if (pthread_mutex_lock(&reqring->lock) != 0)
+			return request;
 	}
+
+	/* linked list, now no req limitation */
+	reqring->append(request);
+	thread_fprintf(logf, "%d:%d sending new_req to /%d\n", thread_type, thread_id, reqring_id);
+	pthread_cond_signal(&reqring->new_req);
+	pthread_mutex_unlock(&reqring->lock);
+	return NULL;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -980,14 +1012,17 @@ ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str) {
 		// fprintf(logf, "%d:%d Index built\n", thread_type, thread_id);
 		batch_doc_words.clear();
 	}
+#if 0
 	const int BATCH = req_enqueue_batch;
 	int batch = 0;
 	WordRequestResponse* last_req = NULL;
+#endif
 	ITERATE_QUERY_WORDS(doc_word, doc_str) {
 		std::string doc_word_string = word_to_string(doc_word);
 		if (batch_doc_words.count(doc_word_string))
 			continue;
 		batch_doc_words.insert(doc_word_string);
+#if 0
 		WordRequestResponse* request = NEW(WordRequestResponse, );
 		// request->waiting_doc_worker = -1; // Master
 		request->doc_word_string = doc_word_string;
@@ -1016,34 +1051,96 @@ ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str) {
 		else {
 			last_req = request;
 		}
+#endif
 	}
+#if 0
 	if (batch)
 		SendSearchWordRequest(ring, last_req, 1);
+#endif
 
 	return EC_SUCCESS;
 }
 
-void WaitWordResults() {
+int word_feeder_n = WORD_FEEDER_N;
+ErrorCode VPTreeWordFeeder(int word_feeder_id) {
+	int j = 0;
+	const int BATCH = req_enqueue_batch;
+	int batch = 0;
+	WordRequestResponse* last_req = NULL;
+	for (std::set<std::string>::iterator i = batch_doc_words.begin();
+					i != batch_doc_words.end(); i++, j++) {
+#if ENABLE_LEN_AWARE_REQRING
+		if (i->length() % word_feeder_n != word_feeder_id) {
+			continue;
+		}
+#else
+		if (j % word_feeder_n != word_feeder_id) {
+			continue;
+		}
+#endif
+#if 1
+		WordRequestResponse* request = NEW(WordRequestResponse, );
+		// request->waiting_doc_worker = -1; // Master
+		request->doc_word_string = *i;
+#if 0
+		request->searchtype = SEARCH_HAMMING_EDIT;
+		request->tau = TAU;
+#endif
+		request->rs = NULL;
+		request->next = last_req;
+		request->resp_next = NULL;
+
+		if(ring->resptail[word_feeder_id]) {
+			ring->resptail[word_feeder_id]->resp_next = request;
+			ring->resptail[word_feeder_id] = request;
+		}
+		else {
+			ring->resphead[word_feeder_id] = ring->resptail[word_feeder_id] = request;
+		}
+		batch ++;
+
+		if (batch >= BATCH) {
+			last_req = SendSearchWordRequest(ring,
+				GetReqringToSend(), request, 0);
+			if (!last_req)
+				batch = 0;
+		}
+		else {
+			last_req = request;
+		}
+#endif
+	}
+#if 1
+	if (batch)
+		SendSearchWordRequest(ring, word_feeder_id % req_ring_n, last_req, 1);
+#endif
+	return EC_SUCCESS;
+}
+
+void WaitWordResults(int waiter_id) {
+	ASSERT_THREAD(WORD_WAITER_THREAD, waiter_id);
+	threadResultCache = &__threadResultCache[waiter_id];
+
 	pthread_mutex_lock(&ring->resplock);
-	while (ring->resphead) {
-		while (ring->resphead &&
-			ring->resphead->rs == NULL) {
-			// fprintf(logf, "waiting for respcond of %s\n", ring->resphead->doc_word_string.c_str());
+	while (ring->resphead[waiter_id]) {
+		while (ring->resphead[waiter_id] &&
+			ring->resphead[waiter_id]->rs == NULL) {
+			// fprintf(logf, "waiting for respcond of %s\n", ring->resphead[waiter_id]->doc_word_string.c_str());
 			pthread_cond_wait(&ring->respcond, &ring->resplock);
 		}
-		if (!ring->resphead)
+		if (!ring->resphead[waiter_id])
 			break;
-		WordRequestResponse* response = ring->resphead;
-		while ( ring->resphead && ring->resphead->rs != NULL) {
-			ring->resphead = ring->resphead->resp_next;
+		WordRequestResponse* response = ring->resphead[waiter_id];
+		while ( ring->resphead[waiter_id] && ring->resphead[waiter_id]->rs != NULL) {
+			ring->resphead[waiter_id] = ring->resphead[waiter_id]->resp_next;
 		}
-		if (ring->resphead == NULL)
-			ring->resptail = NULL;
+		if (ring->resphead[waiter_id] == NULL)
+			ring->resptail[waiter_id] = NULL;
 		pthread_mutex_unlock(&ring->resplock);
 
-		while (response != ring->resphead) {
+		while (response != ring->resphead[waiter_id]) {
 #if ENABLE_GLOBAL_RESULT_CACHE
-			ASSERT_THREAD(MASTER_THREAD, 0);
+			// ASSERT_THREAD(MASTER_THREAD, 0);
 #if 0
 	ResultSet* rs = response->rs;
 	for (int i = 0; rs && i < TAU; i++) {
@@ -1056,8 +1153,12 @@ void WaitWordResults() {
 		}
 	}
 #endif
-			resultCache.insert(std::pair<std::string, ResultSet*>(
+#if ENABLE_THREAD_RESULT_CACHE
+			threadResultCache->insert(std::pair<std::string, ResultSet*>(
 					response->doc_word_string, response->rs));
+#else
+			ERROR
+#endif
 #else
 			ERROR
 #endif
@@ -1070,6 +1171,12 @@ void WaitWordResults() {
 }
 #endif
 
+void MasterMergeCache() {
+	for (int i = 0; i < word_waiter_n; i++) {
+		resultCache.insert(__threadResultCache[i].begin(),
+				__threadResultCache[i].end());
+	}
+}
 ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids)
 {
 	if (new_vptrees_unless_exists()) {
@@ -1188,7 +1295,8 @@ resend_the_request:
 
 void vptree_doc_worker_init() {
 #if ENABLE_THREAD_RESULT_CACHE
-	threadResultCache = &__threadResultCache[thread_id];
+	ASSERT_THREAD(DOC_WORKER_THREAD, thread_id);
+	// threadResultCache = &__threadResultCache[thread_id];
 #endif
 }
 
@@ -1214,8 +1322,12 @@ void vptree_system_init() {
 		fprintf(logf, "    ENABLE_STATIC_MALLOC       = %d\n", ENABLE_STATIC_MALLOC);
 		fprintf(logf, "    ENABLE_ALLOW_MEM_LEAK      = %d\n", ENABLE_ALLOW_MEM_LEAK);
 		fprintf(logf, "\n");
+		fprintf(logf, "    ENABLE_LEN_AWARE_REQRING   = %d\n", ENABLE_LEN_AWARE_REQRING);
+		fprintf(logf, "    ENABLE_AFFINITY_SETTING    = %d\n", ENABLE_AFFINITY_SETTING);
+		fprintf(logf, "\n");
 		fprintf(logf, "    preset DOC_WORKER_N        = %d\n", DOC_WORKER_N);
 		fprintf(logf, "    preset WORD_SEARCHER_N     = %d\n", WORD_SEARCHER_N);
+		fprintf(logf, "    preset WORD_FEEDER_N       = %d\n", WORD_FEEDER_N);
 		fprintf(logf, "    preset REQ_RING_N          = %d\n", REQ_RING_N);
 	}
 
@@ -1224,6 +1336,11 @@ void vptree_system_init() {
 		word_searcher_n = atoi(env_word_searcher_n);
 	}
 	fprintf(logf, "word_searcher_n = %d\n", word_searcher_n);
+	char* env_word_feeder_n;
+	if ((env_word_feeder_n = getenv("WORD_FEEDER_N")) != NULL) {
+		word_feeder_n = atoi(env_word_feeder_n);
+	}
+	fprintf(logf, "word_feeder_n = %d\n", word_feeder_n);
 	char* env_req_ring_n;
 	if ((env_req_ring_n = getenv("REQ_RING_N")) != NULL) {
 		req_ring_n = atoi(env_req_ring_n);
