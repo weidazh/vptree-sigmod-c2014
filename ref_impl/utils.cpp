@@ -49,7 +49,7 @@ void StickToCores(int type, int tid, int max) {
 	cpu_set_t cpuset;
 	CPU_ZERO(&cpuset);
 	if (N_CORES % max != 0) {
-		fprintf(stderr, "N_CORES % max != 0\n");
+		fprintf(stderr, "N_CORES %% max != 0\n");
 		exit(1);
 	}
 	int mapping[] = {0, 12, 1, 13, 2, 14, 3, 15, 4, 16, 5, 17,

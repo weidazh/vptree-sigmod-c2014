@@ -41,7 +41,50 @@ long long global_perf_counter_edit = 0;
 long long global_perf_counter_index_hamming = 0;
 long long global_perf_counter_index_edit = 0;
 // must be int
-int hamming(const std::string& a, const std::string& b) {
+
+#define ENABLE_MYSTRING 1
+#if ENABLE_MYSTRING
+struct mystring_alt {
+	char x[MAX_WORD_LENGTH + 1];
+	mystring_alt(const char* x) {
+		memcpy(this->x, x, MAX_WORD_LENGTH);
+		this->x[MAX_WORD_LENGTH] = 0;
+	}
+};
+struct mystring {
+	char x[MAX_WORD_LENGTH]; // 31
+	char len;
+
+	mystring():len(0) {x[0] = 0;}
+
+	mystring(const char* w) {
+		const char* p = w;
+		while(NON_NULL(p))
+			p++;
+		int len = p - w;
+		memcpy(x, w, len);
+		x[len] = 0;
+		this->len = len;
+	}
+
+
+	const char* c_str() const{
+		if (len == 31)
+			return (NEW(mystring_alt, x))->x;
+		return x;
+	}
+	int length() const{
+		return len;
+	}
+	bool operator < (const mystring& other) const{
+		return memcmp(x, other.x, len + 1) < 0;
+	}
+};
+#else
+typedef std::string mystring;
+#endif
+
+int hamming(const mystring& a, const mystring& b) {
 	unsigned int oo = 0x7FFFFFFF;
 	unsigned int dist = HammingDistance(a.c_str(), a.length(), b.c_str(), b.length());
 	perf_counter_hamming += 1;
@@ -51,7 +94,7 @@ int hamming(const std::string& a, const std::string& b) {
 	return dist;
 }
 
-int edit(const std::string& a, const std::string& b) {
+int edit(const mystring& a, const mystring& b) {
 	unsigned int oo = 0x7FFFFFFF;
 	unsigned int dist = EditDistance(a.c_str(), a.length(), b.c_str(), b.length());
 	perf_counter_edit += 1;
@@ -90,7 +133,7 @@ public:
 // pthread_rwlock_t wordLock = PTHREAD_RWLOCK_INITIALIZER;
 __thread WordIDType thread_max_word_id = 0;
 class Word {
-	std::string word;
+	mystring word;
 	// int hamming_queries[TAU];
 	int hamming_queries;
 	int edit_queries[TAU];
@@ -98,7 +141,7 @@ class Word {
 	WordIDType word_id;
 
 public:
-	Word(std::string word)
+	Word(mystring word)
 		: word(word), hamming_queries(0), first_word_queries() {
 		memset(edit_queries, 0, sizeof(edit_queries));
 
@@ -171,14 +214,14 @@ public:
 	}
 };
 
-typedef std::map<std::string, Word*> WordMap;
+typedef std::map<mystring, Word*> WordMap;
 typedef std::map<WordIDType, Word*> WordMapByID;
 // pthread_rwlock_t wordMapLock = PTHREAD_RWLOCK_INITIALIZER;
 WordMap wordMap;
 WordMapByID wordMapByID;
-// std::set<std::string> wordSet;
-typedef VpTree<std::string, int, hamming> HammingVpTree;
-typedef VpTree<std::string, int, edit> EditVpTree;
+// std::set<mystring> wordSet;
+typedef VpTree<mystring, int, hamming> HammingVpTree;
+typedef VpTree<mystring, int, edit> EditVpTree;
 HammingVpTree* hamming_vptree;
 EditVpTree* edit_vptree[TAU][MAX_WORD_LENGTH + 1];
 
@@ -200,7 +243,7 @@ public:
 };
 
 #if ENABLE_RESULT_CACHE
-typedef std::map<std::string, ResultSet*> ResultCache;
+typedef std::map<mystring, ResultSet*> ResultCache;
 #if ENABLE_GLOBAL_RESULT_CACHE
 // pthread_rwlock_t resultCacheLock = PTHREAD_RWLOCK_INITIALIZER;
 ResultCache resultCache;
@@ -220,7 +263,10 @@ static const char* next_word_in_query(const char* query_str) {
 	return query_str;
 }
 
-static std::string word_to_string(const char* word) {
+static mystring word_to_string(const char* word) {
+#if ENABLE_MYSTRING
+	return mystring(word);
+#else
 	char w[MAX_WORD_LENGTH + 1];
 	char* p = w;
 	while(NON_NULL(word)) {
@@ -229,7 +275,8 @@ static std::string word_to_string(const char* word) {
 		p++;
 	}
 	*p = 0;
-	return std::string(w);
+	return mystring(w);
+#endif
 }
 
 #define ITERATE_QUERY_WORDS(key, begin) for (const char* (key) = (begin); *(key); (key) = next_word_in_query((key)))
@@ -241,8 +288,8 @@ static int new_vptrees_unless_exists() {
 	if (thread_type != MASTER_THREAD || thread_id != 0)
 		return 0;
 
-	std::vector<std::string> hammingWordList;
-	std::vector<std::string> editWordList[TAU];
+	std::vector<mystring> hammingWordList;
+	std::vector<mystring> editWordList[TAU];
 	if (! hamming_vptree) {
 		long long start = GetClockTimeInUS();
 		long long old_perf_hamming = perf_counter_hamming;
@@ -259,7 +306,7 @@ static int new_vptrees_unless_exists() {
 		}
 		// pthread_rwlock_rdlock(&wordMapLock);
 		ASSERT_PHASE(PHASE_INDEX);
-		for(std::map<std::string, Word*>::iterator i = wordMap.begin();
+		for(std::map<mystring, Word*>::iterator i = wordMap.begin();
 			i != wordMap.end(); i++) {
 
 			Word* w = I2P(i->second);
@@ -299,8 +346,8 @@ static int new_vptrees_unless_exists() {
 #if ENABLE_MULTI_EDITVPTREE
 			// fprintf(stderr, "LEN ed=%d ", ed);
 			for (int i = 1; i <= MAX_WORD_LENGTH; i++) {
-				std::vector<std::string> editWordList2;
-				for (std::vector<std::string>::iterator j = editWordList[ed].begin();
+				std::vector<mystring> editWordList2;
+				for (std::vector<mystring>::iterator j = editWordList[ed].begin();
 					j != editWordList[ed].end(); j++) {
 					int len = j->length();
 					if (i - ed <= len && len <= i + ed)
@@ -386,7 +433,7 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 	bool first = true;
 	int i = 0;
 	ITERATE_QUERY_WORDS(query_word, query_str) {
-		std::string query_word_string = word_to_string(query_word);
+		mystring query_word_string = word_to_string(query_word);
 		// pthread_rwlock_wrlock(&wordMapLock);
 		ASSERT_PHASE(PHASE_SERIAL);
 		ASSERT_THREAD(MASTER_THREAD, 0);
@@ -399,7 +446,7 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 		else {
 			word = NEW(Word, query_word_string);
 			word->push_query(query_id, first, match_type, match_dist);
-			wordMap.insert(std::pair<std::string, Word*>(query_word_string, word));
+			wordMap.insert(std::pair<mystring, Word*>(query_word_string, word));
 			wordMapByID.insert(std::pair<WordIDType, Word*>(word->id(), word));
 			// wordSet.insert(query_word_string);
 		}
@@ -432,7 +479,7 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 	// pthread_rwlock_unlock(&queryMapLock);
 	bool first = true;
 	ITERATE_QUERY_WORDS(query_word, query->getQueryStr()) {
-		std::string query_word_string = word_to_string(query_word);
+		mystring query_word_string = word_to_string(query_word);
 		// pthread_rwlock_wrlock(&wordMapLock);
 		ASSERT_PHASE(PHASE_SERIAL);
 		ASSERT_THREAD(MASTER_THREAD, 0);
@@ -465,7 +512,7 @@ ErrorCode VPTreeQueryRemove(QueryID query_id) {
 
 typedef std::set<WordIDType> SET;
 
-static WordIDType* do_union_y(std::vector<std::string>* y) {
+static WordIDType* do_union_y(std::vector<mystring>* y) {
 	WordIDType* x = (WordIDType*)MALLOC((y->size() + 1) * sizeof(WordIDType));
 	if (x == NULL) {
 		fprintf(logf, "cannot malloc\n");
@@ -473,7 +520,7 @@ static WordIDType* do_union_y(std::vector<std::string>* y) {
 	}
 	int j = 0;
 	// pthread_rwlock_rdlock(&wordMapLock);
-	for(std::vector<std::string>::iterator i = y->begin();
+	for(std::vector<mystring>::iterator i = y->begin();
 		i != y->end();
 		i++, j++) {
 		Word* w = I2P(wordMap.find(*i)->second);
@@ -540,7 +587,7 @@ void words_to_queries(SET* matchedHammingWords, SET* matchedEditWords, std::vect
 	}
 }
 
-ResultSet* findCachedResult(std::string doc_word_string) {
+ResultSet* findCachedResult(mystring doc_word_string) {
 	ResultSet* rs = NULL;
 #if ENABLE_RESULT_CACHE
 	ResultCache::iterator found;
@@ -580,7 +627,7 @@ ResultSet* findCachedResult(std::string doc_word_string) {
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct WordRequestResponse {
-	std::string doc_word_string;
+	mystring doc_word_string;
 #if 0
 #define SEARCH_HAMMING      1
 #define SEARCH_EDIT         2
@@ -596,7 +643,7 @@ struct WordRequestResponse {
 
 	struct WordRequestResponse* next;
 	struct WordRequestResponse* resp_next;
-	char __padding[64 - sizeof(std::string) - sizeof(ResultSet*) - 2 * sizeof(struct WordRequestResponse*)];
+	char __padding[64 - sizeof(mystring) - sizeof(ResultSet*) - 2 * sizeof(struct WordRequestResponse*)];
 };
 
 #if 0
@@ -711,7 +758,7 @@ void* WordSearcher(void* arg) {
 
 	const int BATCH = 8;
 
-	int counter = 0;
+	// int counter = 0;
 
 	pthread_mutex_lock(&reqring->lock);
 	while (! reqring->exiting) {
@@ -749,11 +796,11 @@ void* WordSearcher(void* arg) {
 #endif
 		// int waiting_doc_worker = wrr->waiting_doc_worker;
 REDO:
-		std::string doc_word_string = wrr->doc_word_string;
+		mystring doc_word_string = wrr->doc_word_string;
 
 		ResultSet* rs = NEW(ResultSet, );
 		if (1) {
-			std::vector<std::string> results[TAU];
+			std::vector<mystring> results[TAU];
 			long long start = GetClockTimeInUS();
 			hamming_vptree->search(doc_word_string, TAU, results);
 			for (int i = 0; i < TAU; i++) {
@@ -764,7 +811,7 @@ REDO:
 		thread_fprintf(logf, "%d:%d got new_req\n", thread_type, thread_id);
 
 		if (1) {
-			std::vector<std::string> results[TAU];
+			std::vector<mystring> results[TAU];
 			long long start = GetClockTimeInUS();
 #if ENABLE_SEPARATE_EDIT123
 			for (int ed = 1; ed < TAU; ed ++) {
@@ -1025,8 +1072,8 @@ int word_searcher_n = WORD_SEARCHER_N;
 #if 1
 /* This part is called by master thread to presend requests to WordMatcher. */
 struct SET_OF_STRING {
-	std::set<std::string> bylen[MAX_WORD_LENGTH][26];
-	
+	std::set<mystring> bylen[MAX_WORD_LENGTH][26];
+
 	void clear() {
 		for (int i = 0; i < MAX_WORD_LENGTH; i++) {
 			for (int j = 0; j < 26; j++) {
@@ -1034,7 +1081,7 @@ struct SET_OF_STRING {
 			}
 		}
 	}
-	void insert(const std::string& str) {
+	void insert(const mystring& str) {
 		this->bylen[str.length()][str.c_str()[0] - 'a'].insert(str);
 	}
 } batch_doc_words;
@@ -1055,7 +1102,7 @@ ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str) {
 	WordRequestResponse* last_req = NULL;
 #endif
 	ITERATE_QUERY_WORDS(doc_word, doc_str) {
-		std::string doc_word_string = word_to_string(doc_word);
+		mystring doc_word_string = word_to_string(doc_word);
 #if 0
 		if (batch_doc_words.count(doc_word_string))
 			continue;
@@ -1112,7 +1159,7 @@ ErrorCode VPTreeWordFeeder(int word_feeder_id) {
 			continue;
 	for (int c = 0; c < 26; c++) {
 #endif
-	for (std::set<std::string>::iterator i = batch_doc_words.bylen[len][c].begin();
+	for (std::set<mystring>::iterator i = batch_doc_words.bylen[len][c].begin();
 					i != batch_doc_words.bylen[len][c].end(); i++, j++) {
 #if ENABLE_LEN_AWARE_REQRING
 		if (i->length() % word_feeder_n != word_feeder_id) {
@@ -1201,7 +1248,7 @@ void WaitWordResults(int waiter_id) {
 	}
 #endif
 #if ENABLE_THREAD_RESULT_CACHE
-			threadResultCache->insert(std::pair<std::string, ResultSet*>(
+			threadResultCache->insert(std::pair<mystring, ResultSet*>(
 					response->doc_word_string, response->rs));
 #else
 			ERROR
@@ -1231,7 +1278,7 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 	}
 	SET matchedHammingWords[TAU];
 	SET matchedEditWords[TAU];
-	std::set<std::string> docWords;
+	std::set<mystring> docWords;
 	// int in_flight = 0;
 
 	long long start = GetClockTimeInUS();
@@ -1250,7 +1297,7 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 		WordRequestResponse* request = NULL;
 #endif
 		// if (*doc_word) {
-			std::string doc_word_string = word_to_string(doc_word); // SPEED UP: question, I cannot reuse the pointer doc_str, but can I change *doc_str? */
+			mystring doc_word_string = word_to_string(doc_word); // SPEED UP: question, I cannot reuse the pointer doc_str, but can I change *doc_str? */
 
 			if (docWords.count(doc_word_string))
 				continue;
@@ -1274,7 +1321,7 @@ ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<Que
 #if 0
 resend_the_request:
 		if (request) {
-			std::string doc_word_string = word_to_string(doc_word);
+			mystring doc_word_string = word_to_string(doc_word);
 			response = SendSearchWordRequest(ring, request);
 			if (response == NULL) {
 				request = NULL; // so that I do not resend the request
@@ -1290,7 +1337,7 @@ resend_the_request:
 			in_flight -= 1;
 			rs = response->rs;
 #if ENABLE_RESULT_CACHE
-			threadResultCache->insert(std::pair<std::string, ResultSet*>(response->doc_word_string, rs));
+			threadResultCache->insert(std::pair<mystring, ResultSet*>(response->doc_word_string, rs));
 #endif
 			DELETE(response);
 			response = NULL;
