@@ -657,6 +657,10 @@ struct WordRequestRing {
 			tail = tail->next;
 	}
 };
+int GetWaiterIDFromReqringID(int reqring_id) {
+	// Refer to GetReqringToSend
+	return reqring_id % word_waiter_n;
+}
 struct WordRequestResponseRing {
 	WordRequestRing* reqring[REQ_RING_N];
 	WordRequestResponse* resphead[WORD_FEEDER_N];
@@ -667,8 +671,8 @@ struct WordRequestResponseRing {
 	pthread_mutex_t pts_lock;
 
 	pthread_mutex_t lock;
-	pthread_mutex_t resplock;
-	pthread_cond_t respcond;
+	pthread_mutex_t resplock[WORD_FEEDER_N];
+	pthread_cond_t respcond[WORD_FEEDER_N];
 
 	WordRequestResponseRing(int req_ring_n):
 		worker_threads(0)
@@ -677,9 +681,9 @@ struct WordRequestResponseRing {
 		pthread_mutex_init(&this->lock, NULL);
 		for (int i = 0; i < req_ring_n; i++)
 			reqring[i] = NEW(WordRequestRing, i);
-		pthread_mutex_init(&resplock, NULL);
-		pthread_cond_init(&respcond, NULL);
 		for (int i = 0; i < WORD_FEEDER_N; i++) {
+			pthread_mutex_init(&resplock[i], NULL);
+			pthread_cond_init(&respcond[i], NULL);
 			resphead[i] = resptail[i] = NULL;
 		}
 		// for (int i = 0; i < DOC_WORKER_N; i++)
@@ -702,6 +706,8 @@ void* WordSearcher(void* arg) {
 	long long total_hamming_search = 0;
 	long long total_edit_search = 0;
 
+	const int BATCH = 1;
+
 	pthread_mutex_lock(&reqring->lock);
 	while (! reqring->exiting) {
 		while (reqring->head == NULL && !reqring->exiting) {
@@ -710,11 +716,21 @@ void* WordSearcher(void* arg) {
 		}
 		if (reqring->exiting)
 			break;
+		if (reqring->head == NULL) {
+			fprintf(stderr, "error reqring->head == NULL\n");
+			exit(1);
+		}
 
+		int batch = 0;
 		struct WordRequestResponse* wrr = reqring->head; // reqring->req[reqring->head];
+		struct WordRequestResponse* head = wrr;
 		// reqring->head = (reqring->head + 1) % REQ_N;
-		reqring->head = wrr->next;
-		if (reqring->head == NULL)
+		while (head != NULL && batch < BATCH) {
+			head = head->next;
+			batch ++;
+		}
+		reqring->head = head;
+		if (head == NULL)
 			reqring->tail = NULL;
 		pthread_mutex_unlock(&reqring->lock);
 
@@ -727,6 +743,7 @@ void* WordSearcher(void* arg) {
 		}
 #endif
 		// int waiting_doc_worker = wrr->waiting_doc_worker;
+REDO:
 		std::string doc_word_string = wrr->doc_word_string;
 
 		ResultSet* rs = NEW(ResultSet, );
@@ -764,6 +781,12 @@ void* WordSearcher(void* arg) {
 			total_edit_search += GetClockTimeInUS() - start;
 		}
 		wrr->rs = rs;
+
+		batch --;
+		if (batch) {
+			wrr = wrr->next;
+			goto REDO;
+		}
 #if 0
 		wrr->processed_by = thread_id;
 #endif
@@ -788,10 +811,11 @@ void* WordSearcher(void* arg) {
 		/* Only notify when req is not pending */
 		if (reqring->head == reqring->tail) {
 			// fprintf(logf, "signaling respcond of %s\n", doc_word_string.c_str());
-			pthread_mutex_lock(&ring->resplock);
-			pthread_cond_broadcast(&ring->respcond);
+			int i = GetWaiterIDFromReqringID(reqring->ring_id);
+			pthread_mutex_lock(&ring->resplock[i]);
+			pthread_cond_signal(&ring->respcond[i]);
 			// FIXME: use multiple singals instead
-			pthread_mutex_unlock(&ring->resplock);
+			pthread_mutex_unlock(&ring->resplock[i]);
 		}
 	}
 	pthread_mutex_unlock(&reqring->lock);
@@ -896,6 +920,7 @@ int DivideFrequency(int n) {
 int GetRingIDofThread(int tid) {
 	return tid % req_ring_n;
 }
+#if ENABLE_AFFINITY_SETTING
 static void StickToCores(pthread_t th, int tid) {
 	int num_cores = sysconf(_SC_NPROCESSORS_ONLN);
 	if (num_cores != N_CORES) {
@@ -923,6 +948,7 @@ static void StickToCores(pthread_t th, int tid) {
 		exit(1);
 	}
 }
+#endif
 
 void CreateWordSearchers(struct WordRequestResponseRing* ring, int n) {
 	pthread_mutex_lock(&ring->pts_lock);
@@ -939,7 +965,9 @@ void CreateWordSearchers(struct WordRequestResponseRing* ring, int n) {
 			perror("Pthread create error!");
 			exit(1);
 		}
+#if ENABLE_AFFINITY_SETTING
 		StickToCores(ring->pts[ring->worker_threads], tid);
+#endif
 		ring->worker_threads += 1;
 	}
 	pthread_mutex_unlock(&ring->pts_lock);
@@ -958,7 +986,7 @@ static int GetReqringToSend() {
 		exit(1);
 	}
 	round_robin = (round_robin + 1) % (req_ring_n / word_feeder_n);
-	return round_robin * (req_ring_n / word_waiter_n) + thread_id;
+	return round_robin * word_waiter_n + thread_id;
 }
 static struct WordRequestResponse* SendSearchWordRequest(struct WordRequestResponseRing* ring,
 			int reqring_id,
@@ -971,8 +999,11 @@ static struct WordRequestResponse* SendSearchWordRequest(struct WordRequestRespo
 	int reqring_id = GetReqringToSend();
 #endif
 #endif
+	if (reqring_id > req_ring_n) {
+		fprintf(stderr, "(reqring_id > req_ring_n)\n");
+		exit(1);
+	}
 	WordRequestRing* reqring = ring->reqring[reqring_id];
-
 #if 1
 	if (!must) {
 		if (pthread_mutex_trylock(&reqring->lock) != 0)
@@ -1112,7 +1143,7 @@ ErrorCode VPTreeWordFeeder(int word_feeder_id) {
 	}
 #if 1
 	if (batch)
-		SendSearchWordRequest(ring, word_feeder_id % req_ring_n, last_req, 1);
+		SendSearchWordRequest(ring, GetReqringToSend(), last_req, 1);
 #endif
 	return EC_SUCCESS;
 }
@@ -1121,12 +1152,12 @@ void WaitWordResults(int waiter_id) {
 	ASSERT_THREAD(WORD_WAITER_THREAD, waiter_id);
 	threadResultCache = &__threadResultCache[waiter_id];
 
-	pthread_mutex_lock(&ring->resplock);
+	pthread_mutex_lock(&ring->resplock[waiter_id]);
 	while (ring->resphead[waiter_id]) {
 		while (ring->resphead[waiter_id] &&
 			ring->resphead[waiter_id]->rs == NULL) {
 			// fprintf(logf, "waiting for respcond of %s\n", ring->resphead[waiter_id]->doc_word_string.c_str());
-			pthread_cond_wait(&ring->respcond, &ring->resplock);
+			pthread_cond_wait(&ring->respcond[waiter_id], &ring->resplock[waiter_id]);
 		}
 		if (!ring->resphead[waiter_id])
 			break;
@@ -1136,7 +1167,7 @@ void WaitWordResults(int waiter_id) {
 		}
 		if (ring->resphead[waiter_id] == NULL)
 			ring->resptail[waiter_id] = NULL;
-		pthread_mutex_unlock(&ring->resplock);
+		pthread_mutex_unlock(&ring->resplock[waiter_id]);
 
 		while (response != ring->resphead[waiter_id]) {
 #if ENABLE_GLOBAL_RESULT_CACHE
@@ -1165,9 +1196,9 @@ void WaitWordResults(int waiter_id) {
 			response = response->resp_next;
 		}
 
-		pthread_mutex_lock(&ring->resplock);
+		pthread_mutex_lock(&ring->resplock[waiter_id]);
 	}
-	pthread_mutex_unlock(&ring->resplock);
+	pthread_mutex_unlock(&ring->resplock[waiter_id]);
 }
 #endif
 
@@ -1362,6 +1393,10 @@ void vptree_system_init() {
 	}
 	if (word_searcher_n > WORD_SEARCHER_N) {
 		fprintf(logf, "word_searcher_n > WORD_SEARCHER_N\n");
+		exit(1);
+	}
+	if (word_feeder_n > WORD_FEEDER_N) {
+		fprintf(logf, "word_feeder_n > WORD_FEEDER_N\n");
 		exit(1);
 	}
 

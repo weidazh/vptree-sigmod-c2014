@@ -35,7 +35,7 @@ extern FILE* logf;
 extern int doc_worker_n;
 #define WORD_SEARCHER_N 24
 extern int word_searcher_n;
-#define WORD_FEEDER_N 4
+#define WORD_FEEDER_N 12
 #define WORD_WAITER_N WORD_FEEDER_N
 extern int word_feeder_n;
 #define word_waiter_n word_feeder_n
