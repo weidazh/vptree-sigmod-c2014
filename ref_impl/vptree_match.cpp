@@ -42,8 +42,9 @@ long long global_perf_counter_index_hamming = 0;
 long long global_perf_counter_index_edit = 0;
 // must be int
 
-#define ENABLE_MYSTRING 1
 #if ENABLE_MYSTRING
+#define likely(x) __builtin_expect((x),1)
+#define unlikely(x) __builtin_expect((x),0)
 struct mystring_alt {
 	char x[MAX_WORD_LENGTH + 1];
 	mystring_alt(const char* x) {
@@ -51,42 +52,192 @@ struct mystring_alt {
 		this->x[MAX_WORD_LENGTH] = 0;
 	}
 };
+
 struct mystring {
-	char x[MAX_WORD_LENGTH]; // 31
-	char len;
+	// use two bytes for 3 chars
+	// 16 is fair enough
+#define MYSTRING_N 11
+	unsigned short x[MYSTRING_N];
+	unsigned char len;
+	char* c_string;
+	// char __padding[32 - sizeof(unsigned short) * MYSTRING_N - sizeof(unsigned char) - sizeof(char*)];
 
-	mystring():len(0) {x[0] = 0;}
+	mystring() : c_string(NULL) {
+		if(sizeof(struct mystring) != 32) {
+			fprintf(stderr, "(sizeof(struct mystring) %d != 32)\n", sizeof(struct mystring));
+			// fprintf(stderr, "sizeof(padding) %d\n", sizeof(__padding));
+			fprintf(stderr, "offset(len) %d\n", (char*)&this->len - (char*)this);
+			fprintf(stderr, "offset(c_string) %d\n", (char*)&this->c_string - (char*)this);
+			// fprintf(stderr, "offset(__padding) %d\n", (char*)&this->__padding - (char*)this);
+			exit(1);
+		}
+		memset(this, 0, sizeof(this));
+	}
 
-	mystring(const char* w) {
+	mystring(const char* w) : c_string(NULL) {
 		const char* p = w;
 		while(NON_NULL(p))
 			p++;
 		int len = p - w;
-		memcpy(x, w, len);
-		x[len] = 0;
 		this->len = len;
+
+		memset(x, 0, MYSTRING_N);
+
+		// HLHLHLHLHL
+		int i, j;
+		// 'a' = 0x61 .. 0110 0001
+		// 'z' = 0x7a    0111 1010
+		// c & 0x
+#define NULL_TO_CHAR 26
+#define PER_DIMENSION 27
+		for (i = 0, j = 0; i < len; i += 3, j ++) {
+			int c = w[i] - 'a';
+			int d = i + 1 < len ? w[i + 1] - 'a' : NULL_TO_CHAR;
+			int e = i + 2 < len ? w[i + 2] - 'a' : NULL_TO_CHAR;
+			x[j] = c * PER_DIMENSION * PER_DIMENSION + d * PER_DIMENSION + e;
+		}
 	}
 
+	const unsigned short* half_str() const {
+		return x;
+	}
+
+	const char* static_str() const{
+		static __thread char c[32];
+		for (int i = 0; i < this->len; i++) {
+			char y;
+			if (i % 3 == 0)
+				y = x[i / 3] / (PER_DIMENSION * PER_DIMENSION);
+			else if (i % 3 == 1)
+				y = x[i / 3] / PER_DIMENSION % PER_DIMENSION;
+			else
+				y = x[i / 3] % PER_DIMENSION;
+			if (y == NULL_TO_CHAR)
+				y = 0;
+			else
+				y = 'a' + y;
+			c[i] = y;
+		}
+		c[len] = 0;
+		return c;
+	}
 
 	const char* c_str() const{
-		if (len == 31)
-			return (NEW(mystring_alt, x))->x;
-		return x;
+		// Please do not use me frequently
+		if (!c_string) {
+			((mystring*)this)->c_string = (char*)MALLOC(32);
+			strcpy(c_string, static_str());
+		}
+		return c_string;
+	}
+	unsigned char codeat0() const {
+		return x[0] / (PER_DIMENSION * PER_DIMENSION);
 	}
 	int length() const{
 		return len;
 	}
 	bool operator < (const mystring& other) const{
-		return memcmp(x, other.x, len + 1) < 0;
+		return memcmp(x, other.x, MYSTRING_N) < 0;
 	}
 };
+
+void test() {
+	mystring a("abcd");
+	mystring b("abcdi");
+	fprintf(stderr, "%s\n", a.c_str());
+	fprintf(stderr, "%s\n", b.c_str());
+	// exit(1);
+}
 #else
 typedef std::string mystring;
 #endif
 
+#define ENABLE_HALFSTRING 0
+#ifdef ENABLE_HALFSTRING
+static inline int min2(int v, int b) {
+	if (v < b)
+		return v;
+	else
+		return b;
+}
+#define likely(x) __builtin_expect((x),1)
+#define unlikely(x) __builtin_expect((x),0)
+
+#define DIFF_HALF_0(a, b) !!((a[0] ^ b[0]) & 0xf0)
+int static inline DIFF_HALF(const unsigned char* a, const unsigned char* b, int i, int j) {
+	return  ((i % 2 == 0) && (	((j % 2 == 0) && !!((a[i] ^ b[j]) & 0xf0)) ||
+					((j % 2 != 0) && !!(((a[i] >> 4) ^ b[i]) & 0x0f)))) ||
+		((i % 2 != 0) && (	((j % 2 == 0) && !!((a[i] ^ (b[j] >> 4)) & 0x0f)) ||
+					((j % 2 != 0) && !!((a[i] ^ b[i]) & 0x0f))));
+}
+		
+static inline int EditDistanceCoreH(const unsigned char* a, int na, const unsigned char* b, int nb) {
+	int T[2][MAX_WORD_LENGTH]; // gprof: static or not, no difference
+	int cur = 0;
+	int best;
+	// loop unrolling
+	{
+		best = T[cur][0] = DIFF_HALF_0(a, b);
+		for (int ib = 1; ib < nb; ib ++) { // do not use v, v1, v2, 0.5s faster
+			best = min2(best + 1,
+				ib + unlikely(DIFF_HALF(a, b, 0, ib)));
+			T[cur][ib] = best;
+		}
+	}
+	for (int ia = 1; ia < na; ia++) {
+		cur = !cur;
+		T[cur][0] = min2(ia + (DIFF_HALF(a, b, ia, 0)), T[!cur][0] + 1);
+		best = T[cur][0]; // use best, 0.8s faster
+		for (int ib = 1; ib < nb; ib ++) { // do not use v, v1, v2, 0.5s faster
+			if (unlikely(T[!cur][ib] < best))
+				best = T[!cur][ib];
+			best = min2(best + 1,
+				T[!cur][ib - 1] + unlikely(DIFF_HALF(a, b, ia, ib)));
+			// likely a = b? why? but test show me likely is 0.3s faster
+			T[cur][ib] = best;
+		}
+	}
+	return best;
+}
+static int EditDistanceH(const unsigned char* a, int na, const unsigned char* b, int nb) {
+	if (na > nb) {
+		return EditDistanceCoreH(b, nb, a, na);
+	}
+	else {
+		return EditDistanceCoreH(a, na, b, nb);
+	}
+}
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+// Computes Hamming distance between a null-terminated string "a" with length "na"
+//  and a null-terminated string "b" with length "nb" 
+static unsigned int HammingDistanceH(const unsigned char* a, int na, const unsigned char* b, int nb)
+{
+	int j, oo=0x7FFFFFFF;
+	if(na!=nb) return oo;
+	
+	unsigned int num_mismatches=0;
+	for(j = 0; j < na; j++) {
+		unsigned char c = a[j] /* xor */ ^ b[j];
+		if(c & 0xf0)
+			num_mismatches++;
+		if(c & 0x0f)
+			num_mismatches++;
+	}
+	
+	return num_mismatches;
+}
+
+
+#endif
+
 int hamming(const mystring& a, const mystring& b) {
 	unsigned int oo = 0x7FFFFFFF;
+#if ENABLE_HALFSTRING
+	unsigned int dist = HammingDistanceH(a.half_str(), a.length(), b.half_str(), b.length());
+#else
 	unsigned int dist = HammingDistance(a.c_str(), a.length(), b.c_str(), b.length());
+#endif
 	perf_counter_hamming += 1;
 	if (dist == oo) {
 		return oo - TAU;
@@ -96,7 +247,11 @@ int hamming(const mystring& a, const mystring& b) {
 
 int edit(const mystring& a, const mystring& b) {
 	unsigned int oo = 0x7FFFFFFF;
+#if ENABLE_HALFSTRING
+	unsigned int dist = EditDistanceH(a.half_str(), a.length(), b.half_str(), b.length());
+#else
 	unsigned int dist = EditDistance(a.c_str(), a.length(), b.c_str(), b.length());
+#endif
 	perf_counter_edit += 1;
 	if (dist == oo) {
 		return oo - TAU;
@@ -1082,7 +1237,7 @@ struct SET_OF_STRING {
 		}
 	}
 	void insert(const mystring& str) {
-		this->bylen[str.length()][str.c_str()[0] - 'a'].insert(str);
+		this->bylen[str.length()][str.codeat0()].insert(str);
 	}
 } batch_doc_words;
 void BuildIndex() {
@@ -1402,6 +1557,7 @@ void vptree_doc_worker_destroy() {
 }
 
 void vptree_system_init() {
+	test();
 	ASSERT_THREAD(MASTER_THREAD, 0);
 	if (hku) {
 		fprintf(logf, "system_init\n");

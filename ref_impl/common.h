@@ -43,6 +43,7 @@ extern int word_feeder_n;
 extern int req_ring_n;
 #define ENABLE_LEN_AWARE_REQRING 1
 #define ENABLE_AFFINITY_SETTING 1
+#define ENABLE_MYSTRING 1
 
 #define REQ_RING_POLICY_LEN_MOD 1
 #define REQ_RING_POLICY_ROUND_ROBIN 2
