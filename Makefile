@@ -45,7 +45,7 @@ CXXFLAGS=$(CFLAGS)
 LDFLAGS=-pthread
 
 # The programs that will be built
-PROGRAMS=testdriver teststatic
+PROGRAMS=testdriver teststatic smalltest
 
 # The name of the library that will be built
 LIBRARY=core
@@ -55,6 +55,9 @@ all: $(PROGRAMS)
 
 lib: $(IMPL_O)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -shared -o lib$(LIBRARY).so $(IMPL_O)
+
+smalltest: ref_impl/smalltest.o
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $<
 
 testdriver: lib $(TEST_O)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $(TEST_O) ./lib$(LIBRARY).so
