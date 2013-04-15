@@ -28,7 +28,7 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 #define ENABLE_WAITER_LOCAL_CACHE 1
 #define ENABLE_GLOBAL_RESULT_CACHE 1
 
-#define ENABLE_MULTI_EDITVPTREE 0
+#define ENABLE_MULTI_EDITVPTREE 1
 #define ENABLE_SEPARATE_EDIT123 1
 
 typedef int WordIDType;

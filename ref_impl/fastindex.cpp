@@ -10,6 +10,8 @@
 #define DEBUG_IB 6
 #define DEBUG_IC DecodeToIC(0x15, 0x15)
 int DEBUG2 = 0;
+#define likely(x) __builtin_expect((x),1)
+#define unlikely(x) __builtin_expect((x),0)
 
 #define IA_ABC 0
 #define IA_AAB 1
@@ -29,13 +31,21 @@ int b_shift[5][3] = {
 	};
 // char sign[3] = {0, 1, -1};
 short power3[] = {1, 3, 9, 27, 81, 243, /* not used */ 729};
+
+int power3x[4][6] ={
+	 {0, 0, 0, 0, 0, 0},
+	 {1, 3, 9, 27, 81, 243},
+	 {2, 6, 18, 54, 162, 486},
+	 {2, 6, 18, 54, 162, 486}
+	};
 /* abc: 1 * 4**3
  * aab/aba/abb: 3 * 3**3
  * aaa: 1 * 2**3
  * in all 64 + 81 + 8 = 153
  */
 
-int IAB(int ia, int ib) {
+static inline int IAB(int ia, int ib) {
+#if 0
 	if (ia > 5) {
 		fprintf(stderr, "ia > 5\n");
 		exit(1);
@@ -44,22 +54,26 @@ int IAB(int ia, int ib) {
 		fprintf(stderr, "ib > alimit\n");
 		exit(1);
 	}
+#endif
 	return aoffset[ia] + ib;
 }
 
 struct Index {
-	/* range from 0 to 3**6 */
+	/* range from 0 to 4**3 */
 	char right2;
 	char bottom2;
 } idx[153][POWER6(3)];
 
-static char& GetRight(int ia, int ib, int ic) {
+static inline Index* GetIndex(int ia, int ib, int ic) {
+	return &idx[IAB(ia, ib)][ic]; 
+}
+static inline char& GetRight(int ia, int ib, int ic) {
 	return idx[IAB(ia, ib)][ic].right2;
 }
-static char& GetBottom(int ia, int ib, int ic) {
+static inline char& GetBottom(int ia, int ib, int ic) {
 	return idx[IAB(ia, ib)][ic].bottom2;
 }
-static char EncodeRightOrBottom(int a0, int a1, int a2, int a3) {
+static inline char EncodeRightOrBottom(int a0, int a1, int a2, int a3) {
 	int diff1 = a1 - a0;
 	int diff2 = a2 - a1;
 	int diff3 = a3 - a2;
@@ -67,28 +81,32 @@ static char EncodeRightOrBottom(int a0, int a1, int a2, int a3) {
 		((diff2 & 0x3) << 2) |
 		((diff3 & 0x3) << 0);
 }
-static int DecodeToIC(int left, int top) {
+static inline int DecodeToIC(int left, int top) {
 	// code 0, 1, 3
 	// IC   1, 2, 0
 	// sign 0, 1, -1
-	int diff0 = ((left >> 4) + 1) & 0x3;
-	int diff2 = ((left >> 2) + 1) & 0x3;
-	int diff4 = ((left >> 0) + 1) & 0x3;
+	int diff4 = ((left) + 1) & 0x3;
+	left >>= 2;
+	int diff2 = ((left) + 1) & 0x3;
+	left >>= 2;
+	int diff0 = ((left) + 1) & 0x3;
 
-	int diff1 = ((top >> 4) + 1) & 0x3;
-	int diff3 = ((top >> 2) + 1) & 0x3;
-	int diff5 = ((top >> 0) + 1) & 0x3;
+	int diff5 = ((top) + 1) & 0x3;
+	top >>= 2;
+	int diff3 = ((top) + 1) & 0x3;
+	top >>= 2;
+	int diff1 = ((top) + 1) & 0x3;
 	int ret;
-	ret = 	diff0 * power3[0] +
-		diff1 * power3[1] +
-		diff2 * power3[2] +
-		diff3 * power3[3] +
-		diff4 * power3[4] +
-		diff5 * power3[5];
+	ret = 	power3x[diff0][0] + 
+		power3x[diff1][1] +
+		power3x[diff2][2] +
+		power3x[diff3][3] +
+		power3x[diff4][4] +
+		power3x[diff5][5];
 	//vcvg fprintf(stderr, "decode 0x%x 0x%x to %d (%d/%d/%d/%d/%d/%d)\n", left, top, ret, diff0, diff1, diff2, diff3, diff4, diff5);
 	return ret;
 }
-static char DecodeToSum(int left, int top) {
+static inline char DecodeToSum(int left, int top) {
 	static const char sign[] = {0, 1, 0, -1};
 	return 	sign[left >> 4] +
 		sign[(left >> 2) & 0x3] +
@@ -98,17 +116,17 @@ static char DecodeToSum(int left, int top) {
 		sign[(top >> 2) & 0x3] +
 		sign[top & 0x3];
 }
-static char DecodeToSumB2(int bottom) {
+static inline char DecodeToSumB2(int bottom) {
 	static const char sign[] = {0, 1, 0, -1};
 	return 	sign[(bottom >> 2) & 0x3] +
 		sign[bottom & 0x3];
 }
 
-static char DecodeToSumB1(int bottom) {
+static inline char DecodeToSumB1(int bottom) {
 	static const char sign[] = {0, 1, 0, -1};
 	return 	sign[bottom & 0x3];
 }
-static void DecodeDPLeftAndTopFromIC(int dp[4][4], int ic) {
+static inline void DecodeDPLeftAndTopFromIC(int dp[4][4], int ic) {
 	static const char sign[] = {-1, 0, 1};
 	dp[0][0] = 0;
 	int c = ic;
@@ -212,7 +230,7 @@ static int encode_bottom(int dp[4][4]) {
 	return __encode(dp[3][0], dp[3][1], dp[3][2], dp[3][3], 1);
 }
 #endif
-static int encode_ia(int a0, int a1, int a2) {
+static inline int encode_ia(int a0, int a1, int a2) {
 	if (a0 == a1) {
 		// 1 or 4
 		if (a0 == a2)
@@ -230,11 +248,11 @@ static int encode_ia(int a0, int a1, int a2) {
 }
 
 
-static int encode_ia_from_half(int a012) {
+static inline int encode_ia_from_half(int a012) {
 	return encode_ia(a012 >> 10, (a012 >> 5) & 31, a012 & 31);
 }
 
-static int encode_b(int ia, int a0, int a1, int a2, int b) {
+static inline int encode_b(int ia, int a0, int a1, int a2, int b) {
 	if (b == a0)
 		return 0;
 	switch (ia) {
@@ -262,13 +280,87 @@ static int encode_b(int ia, int a0, int a1, int a2, int b) {
 	}
 }
 
-static int encode_ib(int ia, int a0, int a1, int a2, int b0, int b1, int b2) {
+static inline int encode_ib(int ia, int a0, int a1, int a2, int b0, int b1, int b2) {
 	return encode_b(ia, a0, a1, a2, b0) * b_shift[ia][0] +
 		encode_b(ia, a0, a1, a2, b1) * b_shift[ia][1] +
 		encode_b(ia, a0, a1, a2, b2);
 }
 
-static int encode_ib_from_half(int ia, int a012, int b012) {
+int BTABLE[4][4][4] = {
+	{ {0, 1, 2, -1}, {3, 4, 5, -1}, {6, 7, 8, -1}, {-1, -1, -1, -1} },
+	{ {9, 10, 11, -1}, {12, 13, 14, -1}, {15, 16, 17, -1}, {-1, -1, -1, -1} },
+	{ {18, 19, 20, -1}, {21, 22, 23, -1}, {24, 25, 26, -1}, {-1, -1, -1, -1} },
+	{ {-1, -1, -1, -1}, {-1, -1, -1, -1}, {-1, -1, -1, -1}, {-1, -1, -1, -1} },
+};
+static inline int encode_b_abc(int a0, int a1, int a2, int b) {
+	if (unlikely(b == a0))
+		return 0;
+	if (unlikely(b == a1))
+		return 1;
+	return (2 | likely(b != a2));
+}
+static inline int encode_b_ab(int a0, int a1, int b) {
+	if (unlikely(b == a1))
+		return 1;
+	return (likely(b != a0) << 1);
+}
+static inline int encode_b_a(int a0, int b) {
+	return likely(b != a0);
+}
+int FASTTABLE[5] = {
+	(0 << 4) | (1 << 2) | 2,
+	(0 * 9) + (0 * 3) + 1,
+	(0 * 9) + (1 * 3) + 0,
+	(0 * 9) + (1 * 3) + 1,
+	(0 << 2) | (0 << 2) | 0
+	
+};
+static inline int encode_ib_from_half(int ia, int a012, int b012) {
+	if (a012 == b012) {
+		return FASTTABLE[ia];
+	}
+	int a0, a1, a2;
+	int b0, b1, b2;
+	int B0, B1, B2;
+	b0 = b012 >> 10;
+	b1 = (b012 >> 5) & 31;
+	b2 = b012 & 31;
+	switch(ia) {
+	case 0: // abc
+		a0 = a012 >> 10;
+		a1 = (a012 >> 5) & 31;
+		a2 = a012 & 31;
+		return
+		(encode_b_abc(a0, a1, a2, b0) << 4) |
+		(encode_b_abc(a0, a1, a2, b1) << 2) |
+		(encode_b_abc(a0, a1, a2, b2));
+	case 1:	// aab
+		a0 = a012 >> 10;
+		a1 = a012 & 31;
+		goto HANDLE123;
+	case 2: // aba
+		a1 = (a012 >> 5) & 31;
+		a0 = a012 & 31;
+		goto HANDLE123;
+	case 3: // abb
+		a0 = a012 >> 10;
+		a1 = a012 & 31;
+HANDLE123:
+		B0 = encode_b_ab(a0, a1, b0); // value [0,3)
+		B1 = encode_b_ab(a0, a1, b1);
+		B2 = encode_b_ab(a0, a1, b2);
+		return BTABLE[B0][B1][B2];
+	case 4: 
+		a0 = a012 & 31;
+		return
+		(encode_b_a(a0, b0) << 2) |
+		(encode_b_a(a0, b1) << 1) |
+		(encode_b_a(a0, b2));
+	default:
+		return -1;
+	}
+}
+static inline int encode_ib_from_half1(int ia, int a012, int b012) {
 	return encode_ib(ia, a012 >> 10, (a012 >> 5) & 31, a012 & 31, b012 >> 10, (b012 >> 5) & 31, b012 & 31);
 }
 
@@ -367,23 +459,26 @@ static int build_index() {
 }
 
 static int edit_distance(const char* _a, const char* _b, int trailing_zeros);
-static int edit_distance(const char* _a, const char* _b) {
+static inline int edit_distance(const char* _a, const char* _b) {
 	return edit_distance(_a, _b, 0);
 }
-static int edit_distance_h(const unsigned short* _a, int la, const unsigned short* _b, int lb) {
+int init_code;
+void fastindex_init() {
+	init_code = EncodeRightOrBottom(0, 1, 2, 3);
+}
+static inline int edit_distance_h(const unsigned short* _a, int la, const unsigned short* _b, int lb) {
 	const unsigned short* a = _a;
 	const unsigned short* b = _b;
-	int init_code = EncodeRightOrBottom(0, 1, 2, 3);
-	struct IndexUsage dp[11][11];
+	struct IndexUsage dp[(la-1)/3 + 2][16];
 
-	for (int i = 0; i < 11; i ++) {
-		dp[0][i].corner = i * 3;
-		dp[0][i].top2 = init_code;
+	for (int i = 0; i < (la-1)/3+2; i ++) {
 		dp[i][0].corner = i * 3;
 		dp[i][0].left2 = init_code;
 	}
-
-	int last = 0;
+	for (int i = 0; i < (lb-1)/3+2; i ++) {
+		dp[0][i].corner = i * 3;
+		dp[0][i].top2 = init_code;
+	}
 
 	for (int i = 0; i < la; i += 3) {
 		for (int j = 0; j < lb; j += 3) {
@@ -391,33 +486,15 @@ static int edit_distance_h(const unsigned short* _a, int la, const unsigned shor
 			int ib = encode_ib_from_half(ia, a[i / 3], b[j / 3]);
 			int left = dp[i/3][j/3].left2;
 			int top = dp[i/3][j/3].top2;
-			// struct Index* p = &idx[IAB(ia, ib)][DecodeToIC(left, top)];
-			if (DEBUG2) {
-				fprintf(stderr, "i, j = %d, %d\n", i, j);
-				fprintf(stderr, "    ia, ib = %d, %x\n", ia, ib);
-				fprintf(stderr, "    lefttop = %d\n", dp[i/3][j/3].corner);
-				//vcvg fprintf(stderr, "    top = %d, (%s)\n", top, debug_bottom(top));
-				//vcvg fprintf(stderr, "    left = %d, (%s)\n", left, debug_left(left));
-				//vcvg fprintf(stderr, "    p->right = %d, (%s)\n", p->right, debug_left(p->right));
-				//vcvg fprintf(stderr, "    p->bottom = %d, (%s)\n", p->bottom, debug_bottom(p->bottom));
-			}
-#if VERIFY
 			int ic = DecodeToIC(left, top);
-			if (DecodeToSum(left, GetBottom(ia, ib, ic)) !=
-				DecodeToSum(GetRight(ia, ib, ic), top)) {
-				fprintf(stderr, "    ERROR!! left-bottom != top-right\n");
-			}
-#endif
-			dp[i/3][j/3 + 1].left2 = GetRight(ia, ib, DecodeToIC(left, top));
-			dp[i/3 + 1][j/3].top2 = GetBottom(ia, ib, DecodeToIC(left, top));
-			int corner = dp[i/3][j/3].corner + DecodeToSum(left, GetBottom(ia, ib, DecodeToIC(left, top)));
-			if (DEBUG2) {
-				fprintf(stderr, "    corner = %d\n", corner);
-			}
+			Index* p = GetIndex(ia, ib, ic);
+			dp[i/3][j/3 + 1].left2 = p->right2;
+			dp[i/3 + 1][j/3].top2 = p->bottom2;
+			int corner = dp[i/3][j/3].corner + DecodeToSum(left, p->bottom2);
 			dp[i/3 + 1][j/3 + 1].corner = corner;
-			last = corner;
 		}
 	}
+	int last = dp[(la - 1)/3 + 1][(lb - 1)/3 + 1].corner;
 	/*
 
 				(lb%3)	0 |	1	2	0
@@ -453,6 +530,7 @@ static int edit_distance_h(const unsigned short* _a, int la, const unsigned shor
 	}
 	return last;
 }
+#if 0 || 1
 static int edit_distance(const char* _a, const char* _b, int trailing_zeros) {
 	const char* a = _a;
 	const char* b = _b;
@@ -503,15 +581,17 @@ static int edit_distance(const char* _a, const char* _b, int trailing_zeros) {
 				//vcvg fprintf(stderr, "    p->right = %d, (%s)\n", p->right, debug_left(p->right));
 				//vcvg fprintf(stderr, "    p->bottom = %d, (%s)\n", p->bottom, debug_bottom(p->bottom));
 			}
-#if VERIFY
 			int ic = DecodeToIC(left, top);
-			if (DecodeToSum(left, GetBottom(ia, ib, ic)) !=
-				DecodeToSum(GetRight(ia, ib, ic), top)) {
+#if VERIFY
+			int bottom = GetBottom(ia, ib, ic);
+			int right = GetRight(ia, ib, ic);
+			if (DecodeToSum(left, bottom) !=
+				DecodeToSum(right, top)) {
 				fprintf(stderr, "    ERROR!! left-bottom != top-right\n");
 			}
 #endif
-			dp[i/3][j/3 + 1].left2 = GetRight(ia, ib, DecodeToIC(left, top));
-			dp[i/3 + 1][j/3].top2 = GetBottom(ia, ib, DecodeToIC(left, top));
+			dp[i/3][j/3 + 1].left2 = GetRight(ia, ib, ic);
+			dp[i/3 + 1][j/3].top2 = GetBottom(ia, ib, ic);
 			int corner = dp[i/3][j/3].corner + DecodeToSum(left, GetBottom(ia, ib, DecodeToIC(left, top)));
 			if (DEBUG2) {
 				fprintf(stderr, "    corner = %d\n", corner);
@@ -562,6 +642,7 @@ static int edit_distance(const char* _a, const char* _b, int trailing_zeros) {
 	}
 	return last;
 }
+#endif
 
 static void MY_ASSERT(int x, int y) {
 	if (x != y) {
@@ -607,6 +688,7 @@ int fastindex_main() {
 #endif
 
 void FastEditDistanceBuildIndex() {
+	fastindex_init();
 	build_index();
 }
 
