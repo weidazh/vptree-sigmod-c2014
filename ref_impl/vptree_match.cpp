@@ -53,36 +53,54 @@ struct mystring_alt {
 	}
 };
 
-pthread_rwlock_t mystring_big_lock = PTHREAD_RWLOCK_INITIALIZER;
-struct mystring {
+struct mystring_half {
 	// use two bytes for 3 chars
 	// 16 is fair enough
 #define MYSTRING_N 11
 	unsigned short x[MYSTRING_N];
 	unsigned char len;
 	char __padding[32 - sizeof(unsigned short) * MYSTRING_N - sizeof(unsigned char)];
+#define HAS_C_STRING 0
+#if HAS_C_STRING
 	char c_string[32];
+#endif
 
-	mystring() {
-		if(sizeof(struct mystring) != 64) {
-			fprintf(stderr, "(sizeof(struct mystring) %lu != 32)\n", sizeof(struct mystring));
+#if 0
+	mystring_half() {
+#if HAS_C_STRING
+		if(sizeof(struct mystring_half) != 64) {
+#else
+		if(sizeof(struct mystring_half) != 32) {
+#endif
+			fprintf(stderr, "(sizeof(struct mystring_half) %lu != 32)\n", sizeof(struct mystring_half));
 			// fprintf(stderr, "sizeof(padding) %d\n", sizeof(__padding));
 			fprintf(stderr, "offset(len) %ld\n", (char*)&this->len - (char*)this);
+#if HAS_C_STRING
 			fprintf(stderr, "offset(c_string) %ld\n", (char*)this->c_string - (char*)this);
+#endif
 			// fprintf(stderr, "offset(__padding) %d\n", (char*)&this->__padding - (char*)this);
 			exit(1);
 		}
 		memset(this, 0, sizeof(this));
 	}
 
-	mystring(const char* w) {
+	mystring_half(const mystring_half& other) {
+		memcpy(this, &other, sizeof(mystring_half));
+	}
+#endif
+
+	mystring_half(const char* w) {
+#if HAS_C_STRING
 		memset(c_string, 0, 32);
 		char* q = c_string;
+#endif
 		const char* p = w;
 		while(NON_NULL(p)) {
+#if HAS_C_STRING
 			*q = *p;
-			p++;
 			q++;
+#endif
+			p++;
 		}
 		int len = p - w;
 		this->len = len;
@@ -130,7 +148,11 @@ struct mystring {
 	}
 
 	const char* c_str() const{
+#if HAS_C_STRING
 		return c_string;
+#else
+		return NEW(std::string, static_str())->c_str();
+#endif
 	}
 	unsigned char codeat0() const {
 		return x[0] / (PER_DIMENSION * PER_DIMENSION);
@@ -138,14 +160,58 @@ struct mystring {
 	int length() const{
 		return len;
 	}
-	bool operator < (const mystring& other) const{
+	bool operator < (const mystring_half& other) const{
 		return memcmp(x, other.x, MYSTRING_N) < 0;
+	}
+	bool operator == (const mystring_half& other) const {
+		return memcmp(x, other.x, MYSTRING_N) == 0;
+	}
+};
+
+struct mystring {
+	struct mystring_half* half;
+
+	mystring(const char* word):half(NEW(mystring_half, word)) {
+	}
+
+	mystring(const mystring& word):half(word.half) {}
+
+	const int length() const {
+		return half->length();
+	}
+
+	const char* c_str() const {
+		return half->c_str();
+	}
+
+	unsigned char codeat0() const {
+		return half->codeat0();
+	}
+
+	const mystring_half* operator -> () const {
+		return half;
+	}
+	const mystring_half& operator * () const {
+		return *half;
+	}
+
+	bool operator == (const mystring& other) const {
+		return this->half == other.half ||
+			(*this->half) == (*other.half);
+	}
+
+	bool operator > (const mystring& other) const {
+		return (*other.half) < (*this->half);
+	}
+
+	bool operator < (const mystring& other) const{
+		return (*this->half) < (*other.half);
 	}
 };
 
 void test() {
-	mystring a("abcd");
-	mystring b("abcdi");
+	mystring_half a("abcd");
+	mystring_half b("abcdi");
 	fprintf(stderr, "%s\n", a.c_str());
 	fprintf(stderr, "%s\n", b.c_str());
 	// exit(1);
@@ -154,7 +220,7 @@ void test() {
 typedef std::string mystring;
 #endif
 
-#define ENABLE_HALFSTRING 0
+#define ENABLE_HALFSTRING 1
 
 #define ENABLE_FASTEDITDISTANCE 1
 #define ENABLE_HALFSTRING_HAMMING 1
@@ -244,7 +310,7 @@ static unsigned int HammingDistanceH(const unsigned short* a, int na, const unsi
 int hamming(const mystring& a, const mystring& b) {
 	unsigned int oo = 0x7FFFFFFF;
 #if ENABLE_HALFSTRING_HAMMING
-	unsigned int dist = HammingDistanceH(a.half_str(), a.length(), b.half_str(), b.length());
+	unsigned int dist = HammingDistanceH(a->half_str(), a->length(), b->half_str(), b->length());
 #else
 	unsigned int dist = HammingDistance(a.c_str(), a.length(), b.c_str(), b.length());
 #endif
@@ -257,7 +323,9 @@ int hamming(const mystring& a, const mystring& b) {
 
 int edit(const mystring& a, const mystring& b) {
 	unsigned int oo = 0x7FFFFFFF;
-#if ENABLE_HALFSTRING
+#if ENABLE_HALFSTRING && ENABLE_FASTEDITDISTANCE
+	unsigned int dist = FastEditDistanceH(a->half_str(), a->length(), b->half_str(), b->length());
+#elif ENABLE_HALFSTRING
 	unsigned int dist = EditDistanceH(a.half_str(), a.length(), b.half_str(), b.length());
 #elif ENABLE_FASTEDITDISTANCE
 	unsigned int dist = FastEditDistance(a.c_str(), a.length(), b.c_str(), b.length());
@@ -819,6 +887,16 @@ struct WordRequestResponse {
 	struct WordRequestResponse* next;
 	struct WordRequestResponse* resp_next;
 	char __padding[128 - sizeof(mystring) - sizeof(ResultSet*) - 2 * sizeof(struct WordRequestResponse*)];
+
+	WordRequestResponse(const char* word) :
+			doc_word_string(word), rs(NULL),
+			next(NULL), resp_next(NULL) {
+	}
+
+	WordRequestResponse(const mystring& word) :
+			doc_word_string(word), rs(NULL),
+			next(NULL), resp_next(NULL) {
+	}
 };
 
 #if 0
@@ -1346,16 +1424,8 @@ ErrorCode VPTreeWordFeeder(int word_feeder_id) {
 		}
 #endif
 #if 1
-		WordRequestResponse* request = NEW(WordRequestResponse, );
-		// request->waiting_doc_worker = -1; // Master
-		request->doc_word_string = *i;
-#if 0
-		request->searchtype = SEARCH_HAMMING_EDIT;
-		request->tau = TAU;
-#endif
-		request->rs = NULL;
+		WordRequestResponse* request = NEW(WordRequestResponse, *i);
 		request->next = last_req;
-		request->resp_next = NULL;
 
 		if(ring->resptail[word_feeder_id]) {
 			ring->resptail[word_feeder_id]->resp_next = request;

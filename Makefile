@@ -40,7 +40,7 @@ CFLAGS-$(GPROF) += -pg
 # Compiler flags
 CC  = gcc
 CXX = g++
-CFLAGS=-O0 -fPIC -Wall -g -I. -I./include $(CFLAGS-y)
+CFLAGS=-O3 -fPIC -Wall -g -I. -I./include $(CFLAGS-y)
 CXXFLAGS=$(CFLAGS)
 LDFLAGS=-pthread
 

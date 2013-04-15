@@ -64,5 +64,6 @@ void StickToCores(int type, int tid, int max);
 
 void FastEditDistanceBuildIndex();
 int FastEditDistance(const char* a, int na, const char* b, int nb);
+int FastEditDistanceH(const unsigned short* a, int na, const unsigned short* b, int nb);
 int fastindex_main();
 #endif
