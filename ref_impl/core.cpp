@@ -215,6 +215,7 @@ void setPhase(int phase_to_be) {
 	}
 }
 
+static void CreateFeederWaiterIndexerThreads();
 ErrorCode InitializeIndex(){
 	setThread(MASTER_THREAD, 0);
 	if (strcmp(getenv("HOSTNAME"), "sg010") == 0) {
@@ -250,6 +251,8 @@ ErrorCode InitializeIndex(){
 	stats.start_serial = GetClockTimeInUS();
 	stats.total_serial = 0;
 	stats.start_indexing_and_query_adding = GetClockTimeInUS();
+
+	CreateFeederWaiterIndexerThreads();
 	return EC_SUCCESS;
 }
 
@@ -518,6 +521,8 @@ ErrorCode MTVPTreeMatchDocument(DocID doc_id, const char* doc_str)
 	return EC_SUCCESS;
 }
 
+pthread_barrier_t indexer_start_barr;
+pthread_barrier_t indexer_end_barr;
 ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 {
 	if (doc_id == INVALID_DOC_ID) {
@@ -527,8 +532,14 @@ ErrorCode MatchDocument(DocID doc_id, const char* doc_str)
 	if (threadsPool.in_flight == 0) {
 		stats.total_serial += GetClockTimeInUS() - stats.start_serial;
 		long long start = GetClockTimeInUS();
+
 		setPhase(PHASE_INDEX);
-		BuildIndex();
+		BuildIndexPre();
+		pthread_barrier_wait(&indexer_start_barr);
+		// wait
+		pthread_barrier_wait(&indexer_end_barr);
+		BuildIndexPost();
+
 		setPhase(PHASE_ENQUEUE);
 		stats.total_master_indexing += GetClockTimeInUS() - start;
 		stats.start_enqueuing = GetClockTimeInUS();
@@ -566,6 +577,7 @@ pthread_barrier_t feeder_start_barr;
 pthread_barrier_t feeder_end_barr;
 pthread_barrier_t waiter_start_barr;
 pthread_barrier_t waiter_end_barr;
+
 struct WordFeederWaiterArg {
 	int waiter_id;
 	WordFeederWaiterArg(int id): waiter_id(id) {}
@@ -588,7 +600,23 @@ void* feeder_waiter_thread(void* arg) {
 	return NULL;
 }
 
-void CreateFeederWaiterThreads() {
+struct IndexerArg {
+	int indexer_id;
+	IndexerArg(int id): indexer_id(id) {}
+};
+void* indexer_thread(void* arg) {
+	int id = ((IndexerArg*)arg)->indexer_id;
+	setThread(INDEXER_THREAD, id);
+	StickToCores(INDEXER_THREAD, id, indexer_n);
+	while (true) {
+		pthread_barrier_wait(&indexer_start_barr);
+		BuildIndexThread();
+		pthread_barrier_wait(&indexer_end_barr);
+	}
+	return 0;
+}
+
+static void CreateFeederWaiterIndexerThreads() {
 	if (barriers_init_ed) {
 		return;
 	}
@@ -600,13 +628,19 @@ void CreateFeederWaiterThreads() {
 	for (int i = 0; i < word_waiter_n; i++) {
 		pthread_create(&waiter_threads[i], NULL, feeder_waiter_thread, NEW(WordFeederWaiterArg, i));
 	}
+
+	pthread_barrier_init(&indexer_start_barr, NULL, 1 + indexer_n);
+	pthread_barrier_init(&indexer_end_barr, NULL, 1 + indexer_n);
+	pthread_t indexer_threads[indexer_n];
+	for (int i = 0; i < indexer_n; i++) {
+		pthread_create(&indexer_threads[i], NULL, indexer_thread, NEW(IndexerArg, i));
+	}
+
 	barriers_init_ed = 1;
 }
 
 void WaitResults() {
 	long long start = GetClockTimeInUS();
-
-	CreateFeederWaiterThreads();
 
 	setPhase(PHASE_FEED_WORDS);
 	pthread_barrier_wait(&feeder_start_barr);

@@ -8,7 +8,9 @@ ErrorCode VPTreeQueryAdd(QueryID query_id, const char* query_str, MatchType matc
 ErrorCode VPTreeQueryRemove(QueryID query_id);
 // ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str);
 ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids);
-void BuildIndex();
+void BuildIndexPre();
+void BuildIndexThread();
+void BuildIndexPost();
 ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str);
 ErrorCode VPTreeWordFeeder(int word_feeder_id);
 void WaitWordResults(int waiter_id);

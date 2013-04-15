@@ -39,6 +39,8 @@ extern int word_searcher_n;
 #define WORD_WAITER_N WORD_FEEDER_N
 extern int word_feeder_n;
 #define word_waiter_n word_feeder_n
+#define INDEXER_N 24
+extern int indexer_n;
 #define REQ_RING_N 12
 extern int req_ring_n;
 #define ENABLE_LEN_AWARE_REQRING 1
@@ -55,7 +57,7 @@ extern int req_ring_n;
 
 #define REQ_ENQUEUE_BATCH 1
 extern int req_enqueue_batch;
-#define MAX_THREADS (1 + DOC_WORKER_N + WORD_SEARCHER_N + WORD_WAITER_N)
+#define MAX_THREADS (1 + DOC_WORKER_N + WORD_SEARCHER_N + WORD_WAITER_N + INDEXER_N)
 
 #if ENABLE_LEN_AWARE_REQRING && REQ_ENQUEUE_BATCH != 1
 #error "ENABLE_LEN_AWARE_REQRING && REQ_ENQUEUE_BATCH != 1"
@@ -68,6 +70,7 @@ extern int req_enqueue_batch;
 #define WORD_SEARCHER_THREAD 3
 // #define WORD_FEEDER_THREAD 4
 #define WORD_WAITER_THREAD 5
+#define INDEXER_THREAD 6
 extern __thread int thread_type;
 extern __thread int thread_id;
 extern __thread int thread_sid; /* serialized id, master 0, doc worker 1, doc worker 2, etc*/
@@ -85,6 +88,8 @@ static inline void setThread(int type, int id) {
 	// 	thread_sid = 1 + doc_worker_n + word_searcher_n + id;
 	else if (type == WORD_WAITER_THREAD)
 		thread_sid = 1 + doc_worker_n + word_searcher_n + id;
+	else if (type == INDEXER_THREAD)
+		thread_sid = 1 + doc_worker_n + word_searcher_n + word_waiter_n + id;
 	else {
 		fprintf(logf, "Unknwon thread type %d\n", type);
 		exit(1);

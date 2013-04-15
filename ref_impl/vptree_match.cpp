@@ -28,7 +28,7 @@ int EditDistance(const char* a, int na, const char* b, int nb);
 #define ENABLE_WAITER_LOCAL_CACHE 1
 #define ENABLE_GLOBAL_RESULT_CACHE 1
 
-#define ENABLE_MULTI_EDITVPTREE 1
+#define ENABLE_MULTI_EDITVPTREE 0
 #define ENABLE_SEPARATE_EDIT123 1
 
 typedef int WordIDType;
@@ -58,8 +58,8 @@ struct mystring_half {
 	// 16 is fair enough
 #define MYSTRING_N 11
 	unsigned short x[MYSTRING_N];
-	unsigned char len;
-	char __padding[32 - sizeof(unsigned short) * MYSTRING_N - sizeof(unsigned char)];
+	unsigned short len;
+	// char __padding[32 - sizeof(unsigned short) * MYSTRING_N - sizeof(unsigned char)];
 #define HAS_C_STRING 0
 #if HAS_C_STRING
 	char c_string[32];
@@ -527,119 +527,12 @@ static mystring word_to_string(const char* word) {
 // int old_perf_hamming;
 // int old_perf_edit;
 // return whether or not a new tree is created
+#if 0
 static int new_vptrees_unless_exists() {
 	if (thread_type != MASTER_THREAD || thread_id != 0)
 		return 0;
-
-	std::vector<mystring> hammingWordList;
-	std::vector<mystring> editWordList[TAU];
-	if (! hamming_vptree) {
-		long long start = GetClockTimeInUS();
-		long long old_perf_hamming = perf_counter_hamming;
-		long long old_perf_edit = perf_counter_edit;
-		hamming_vptree = NEW(HammingVpTree);
-#if ENABLE_SEPARATE_EDIT123
-		for (int ed = 1; ed < TAU; ed++) {
-#else
-		for (int ed = 0; ed < 1; ed++) {
-#endif
-			for (int i = 0; i <= MAX_WORD_LENGTH; i++) {
-				edit_vptree[ed][i] = NEW(EditVpTree);
-			}
-		}
-		// pthread_rwlock_rdlock(&wordMapLock);
-		ASSERT_PHASE(PHASE_INDEX);
-		for(std::map<mystring, Word*>::iterator i = wordMap.begin();
-			i != wordMap.end(); i++) {
-
-			Word* w = I2P(i->second);
-
-			if (w->hasHamming())
-				hammingWordList.push_back(i->first);
-#if ENABLE_SEPARATE_EDIT123
-#if 0
-			for (int ed = 1; ed < TAU; ed++) {
-				if (w->hasEdit(ed))
-					editWordList[ed].push_back(i->first);
-			}
-#else
-			for (int ed = TAU - 1; ed > 0; ed --) {
-				if (w->hasEdit(ed)) {
-					editWordList[ed].push_back(i->first);
-					break;
-				}
-			}
-#endif
-#else
-			if (w->hasEdit())
-				editWordList[0].push_back(i->first);
-#endif
-		}
-		// pthread_rwlock_unlock(&wordMapLock);
-		// fprintf(stdout, "searching hamming/edit = %d/%d\n", perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
-		// old_perf_hamming = perf_counter_hamming;
-		// old_perf_edit = perf_counter_edit;
-		hamming_vptree->create(hammingWordList);
-#if ENABLE_SEPARATE_EDIT123
-		for (int ed = 1; ed < TAU; ed++) {
-#else
-		for (int ed = 0; ed < 1; ed++) {
-#endif
-
-#if ENABLE_MULTI_EDITVPTREE
-			// fprintf(stderr, "LEN ed=%d ", ed);
-			for (int i = 1; i <= MAX_WORD_LENGTH; i++) {
-				std::vector<mystring> editWordList2;
-				for (std::vector<mystring>::iterator j = editWordList[ed].begin();
-					j != editWordList[ed].end(); j++) {
-					int len = j->length();
-					if (i - ed <= len && len <= i + ed)
-						editWordList2.push_back(*j);
-				}
-				// fprintf(stderr, "%d ", editWordList2.size());
-				edit_vptree[ed][i]->create(editWordList2);
-			}
-			// fprintf(stderr, "\n");
-#else
-			edit_vptree[ed][0]->create(editWordList[ed]);
-#endif
-		}
-		// fprintf(stdout, "indexing hamming/edit = %d/%d\n", perf_counter_hamming - old_perf_hamming, perf_counter_edit - old_perf_edit);
-		// old_perf_hamming = perf_counter_hamming;
-		// old_perf_edit = perf_counter_edit;
-
-#if ENABLE_RESULT_CACHE
-#if ENABLE_GLOBAL_RESULT_CACHE
-		ASSERT_THREAD(MASTER_THREAD, 0);
-		ASSERT_PHASE(PHASE_INDEX);
-		// pthread_rwlock_wrlock(&resultCacheLock);
-		for(ResultCache::iterator i = resultCache.begin();
-			i != resultCache.end();
-			i++ ) {
-			DELETE(i->second);
-		}
-		resultCache.clear();
-		// pthread_rwlock_unlock(&resultCacheLock);
-#endif
-#if ENABLE_THREAD_RESULT_CACHE
-		for (int i = 0; i < thread_result_cache_n; i++) {
-			__threadResultCache[i].clear();
-		}
-#endif
-#endif
-		long long end = GetClockTimeInUS();
-		/* As we have the vpTreeLock, I can access the stats safely */
-		ASSERT_THREAD(MASTER_THREAD, 0);
-		global_perf_counter_index_hamming += perf_counter_hamming - old_perf_hamming;
-		global_perf_counter_index_edit += perf_counter_edit - old_perf_edit;
-		stats.total_indexing += end - start;
-		stats.total_indexing_and_query_adding += GetClockTimeInUS() - stats.start_indexing_and_query_adding;
-		// fprintf(logf, "[%lld.%06lld] end of indexing\n", end / 1000000LL % 86400, end % 1000000LL);
-
-		return 1;
-	}
-	return 0;
 }
+#endif
 
 static int clear_vptrees() {
 	if (thread_type != MASTER_THREAD || thread_id != 0)
@@ -886,7 +779,7 @@ struct WordRequestResponse {
 
 	struct WordRequestResponse* next;
 	struct WordRequestResponse* resp_next;
-	char __padding[128 - sizeof(mystring) - sizeof(ResultSet*) - 2 * sizeof(struct WordRequestResponse*)];
+	// char __padding[64 - sizeof(mystring) - sizeof(ResultSet*) - 2 * sizeof(struct WordRequestResponse*)];
 
 	WordRequestResponse(const char* word) :
 			doc_word_string(word), rs(NULL),
@@ -1338,17 +1231,120 @@ struct SET_OF_STRING {
 		this->bylen[str.length()][str.codeat0()].insert(str);
 	}
 } batch_doc_words;
-void BuildIndex() {
-	if (new_vptrees_unless_exists()) {
-		// fprintf(logf, "%d:%d Index built\n", thread_type, thread_id);
-		batch_doc_words.clear();
+
+int indexer_n = INDEXER_N;
+std::vector<mystring> hammingWordList;
+std::vector<mystring> editWordList[TAU];
+void BuildIndexPre() {
+	ASSERT_THREAD(MASTER_THREAD, 0);
+	if (hamming_vptree) {
+		fprintf(stderr, "hamming_vptree is not NULL when BuildIndexPre\n");
+		exit(1);
 	}
+	hammingWordList.clear();
+	for(int i = 0; i < TAU; i++) {
+		editWordList[i].clear();
+	}
+	for(std::map<mystring, Word*>::iterator i = wordMap.begin();
+		i != wordMap.end(); i++) {
+
+		Word* w = I2P(i->second);
+
+		if (w->hasHamming())
+			hammingWordList.push_back(i->first);
+#if ENABLE_SEPARATE_EDIT123
+#if 0
+		for (int ed = 1; ed < TAU; ed++) {
+			if (w->hasEdit(ed))
+				editWordList[ed].push_back(i->first);
+		}
+#else
+		for (int ed = TAU - 1; ed > 0; ed --) {
+			if (w->hasEdit(ed)) {
+				editWordList[ed].push_back(i->first);
+				break;
+			}
+		}
+#endif
+#else
+		if (w->hasEdit())
+			editWordList[0].push_back(i->first);
+#endif
+	}
+	
+}
+
+void BuildIndexThread() {
+	long long old_perf_hamming = perf_counter_hamming;
+	long long old_perf_edit = perf_counter_edit;
+
+	// 24 Threads
+	if (thread_id == 0) {
+		hamming_vptree = NEW(HammingVpTree);
+		hamming_vptree->create(hammingWordList);
+	}
+#if ENABLE_SEPARATE_EDIT123
+	for (int ed = 1; ed < TAU; ed++) {
+#else
+	for (int ed = 0; ed < 1; ed++) {
+#endif
+		for (int i = 0; i <= MAX_WORD_LENGTH; i++) {
+			if ((i * TAU + ed) % indexer_n != thread_id)
+				continue;
+			edit_vptree[ed][i] = NEW(EditVpTree);
+		}
+	}
+#if ENABLE_SEPARATE_EDIT123
+	for (int ed = 1; ed < TAU; ed++) {
+#else
+	for (int ed = 0; ed < 1; ed++) {
+#endif
+
+#if ENABLE_MULTI_EDITVPTREE
+		// fprintf(stderr, "LEN ed=%d ", ed);
+		for (int i = 1; i <= MAX_WORD_LENGTH; i++) {
+			if ((i * TAU + ed) % indexer_n != thread_id)
+				continue;
+			std::vector<mystring> editWordList2;
+			for (std::vector<mystring>::iterator j = editWordList[ed].begin();
+				j != editWordList[ed].end(); j++) {
+				int len = j->length();
+				if (i - ed <= len && len <= i + ed)
+					editWordList2.push_back(*j);
+			}
+			// fprintf(stderr, "%d ", editWordList2.size());
+			edit_vptree[ed][i]->create(editWordList2);
+		}
+		// fprintf(stderr, "\n");
+#else
+		if (ed % indexer_n != thread_id)
+			continue;
+		edit_vptree[ed][0]->create(editWordList[ed]);
+#endif
+	}
+
+	pthread_mutex_lock(&global_counter_lock);
+	global_perf_counter_index_hamming += perf_counter_hamming - old_perf_hamming;
+	global_perf_counter_index_edit += perf_counter_edit - old_perf_edit;
+	pthread_mutex_unlock(&global_counter_lock);
+}
+
+void BuildIndexPost() {
+#if ENABLE_ALLOW_MEM_LEAK
+	for(ResultCache::iterator i = resultCache.begin();
+		i != resultCache.end();
+		i++ ) {
+		DELETE(i->second);
+	}
+#endif
+	resultCache.clear();
+	for (int i = 0; i < thread_result_cache_n; i++) {
+		__threadResultCache[i].clear();
+	}
+	batch_doc_words.clear();
+	
 }
 ErrorCode VPTreeMasterMatchDocument(DocID doc_id, const char* doc_str) {
-	if (new_vptrees_unless_exists()) {
-		// fprintf(logf, "%d:%d Index built\n", thread_type, thread_id);
-		batch_doc_words.clear();
-	}
 #if 0
 	const int BATCH = req_enqueue_batch;
 	int batch = 0;
@@ -1518,9 +1514,6 @@ void MasterMergeCache() {
 }
 ErrorCode VPTreeMatchDocument(DocID doc_id, const char* doc_str, std::vector<QueryID>& query_ids)
 {
-	if (new_vptrees_unless_exists()) {
-		// fprintf(logf, "%d:%d Index built\n", thread_type, thread_id);
-	}
 	SET matchedHammingWords[TAU];
 	SET matchedEditWords[TAU];
 	std::set<mystring> docWords;
@@ -1668,6 +1661,7 @@ void vptree_system_init() {
 		fprintf(logf, "    preset DOC_WORKER_N        = %d\n", DOC_WORKER_N);
 		fprintf(logf, "    preset WORD_SEARCHER_N     = %d\n", WORD_SEARCHER_N);
 		fprintf(logf, "    preset WORD_FEEDER_N       = %d\n", WORD_FEEDER_N);
+		fprintf(logf, "    preset INDEXER_N           = %d\n", INDEXER_N);
 		fprintf(logf, "    preset REQ_RING_N          = %d\n", REQ_RING_N);
 	}
 
@@ -1681,6 +1675,11 @@ void vptree_system_init() {
 		word_feeder_n = atoi(env_word_feeder_n);
 	}
 	fprintf(logf, "word_feeder_n = %d\n", word_feeder_n);
+	char* env_indexer_n;
+	if ((env_indexer_n = getenv("INDEXER_N")) != NULL) {
+		indexer_n = atoi(env_indexer_n);
+	}
+	fprintf(logf, "indexer_n = %d\n", indexer_n);
 	char* env_req_ring_n;
 	if ((env_req_ring_n = getenv("REQ_RING_N")) != NULL) {
 		req_ring_n = atoi(env_req_ring_n);
@@ -1706,6 +1705,10 @@ void vptree_system_init() {
 	}
 	if (word_feeder_n > WORD_FEEDER_N) {
 		fprintf(logf, "word_feeder_n > WORD_FEEDER_N\n");
+		exit(1);
+	}
+	if (indexer_n > INDEXER_N) {
+		fprintf(logf, "indexer_n > INDEXER_N\n");
 		exit(1);
 	}
 
