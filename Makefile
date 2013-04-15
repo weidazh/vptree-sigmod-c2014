@@ -29,7 +29,7 @@
 
 # Build targets (your implementation targets should go in IMPL_O)
 TEST_O=test_driver/test.o 
-IMPL_O=ref_impl/core.o ref_impl/vptree_match.o ref_impl/utils.o
+IMPL_O=ref_impl/core.o ref_impl/vptree_match.o ref_impl/utils.o ref_impl/fastindex.o
 HEADERS = ref_impl/common.h ref_impl/utils.h ref_impl/vptree.h ref_impl/vptree_match.h
 
 GPROF := n
@@ -40,12 +40,12 @@ CFLAGS-$(GPROF) += -pg
 # Compiler flags
 CC  = gcc
 CXX = g++
-CFLAGS=-O3 -fPIC -Wall -g -I. -I./include $(CFLAGS-y)
+CFLAGS=-O0 -fPIC -Wall -g -I. -I./include $(CFLAGS-y)
 CXXFLAGS=$(CFLAGS)
 LDFLAGS=-pthread
 
 # The programs that will be built
-PROGRAMS=testdriver teststatic smalltest
+PROGRAMS=testdriver teststatic fastindex
 
 # The name of the library that will be built
 LIBRARY=core
@@ -56,8 +56,8 @@ all: $(PROGRAMS)
 lib: $(IMPL_O)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -shared -o lib$(LIBRARY).so $(IMPL_O)
 
-smalltest: ref_impl/smalltest.o
-	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $<
+fastindex: ref_impl/fastindex.o ref_impl/fi.o
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^
 
 testdriver: lib $(TEST_O)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $(TEST_O) ./lib$(LIBRARY).so

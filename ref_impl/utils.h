@@ -58,4 +58,11 @@ static inline void static_free(void* var) {
 
 int GetCPUID();
 void StickToCores(int type, int tid, int max);
+
+
+
+
+void FastEditDistanceBuildIndex();
+int FastEditDistance(const char* a, int na, const char* b, int nb);
+int fastindex_main();
 #endif

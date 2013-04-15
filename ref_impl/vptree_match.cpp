@@ -53,31 +53,37 @@ struct mystring_alt {
 	}
 };
 
+pthread_rwlock_t mystring_big_lock = PTHREAD_RWLOCK_INITIALIZER;
 struct mystring {
 	// use two bytes for 3 chars
 	// 16 is fair enough
 #define MYSTRING_N 11
 	unsigned short x[MYSTRING_N];
 	unsigned char len;
-	char* c_string;
-	// char __padding[32 - sizeof(unsigned short) * MYSTRING_N - sizeof(unsigned char) - sizeof(char*)];
+	char __padding[32 - sizeof(unsigned short) * MYSTRING_N - sizeof(unsigned char)];
+	char c_string[32];
 
-	mystring() : c_string(NULL) {
-		if(sizeof(struct mystring) != 32) {
+	mystring() {
+		if(sizeof(struct mystring) != 64) {
 			fprintf(stderr, "(sizeof(struct mystring) %lu != 32)\n", sizeof(struct mystring));
 			// fprintf(stderr, "sizeof(padding) %d\n", sizeof(__padding));
 			fprintf(stderr, "offset(len) %ld\n", (char*)&this->len - (char*)this);
-			fprintf(stderr, "offset(c_string) %ld\n", (char*)&this->c_string - (char*)this);
+			fprintf(stderr, "offset(c_string) %ld\n", (char*)this->c_string - (char*)this);
 			// fprintf(stderr, "offset(__padding) %d\n", (char*)&this->__padding - (char*)this);
 			exit(1);
 		}
 		memset(this, 0, sizeof(this));
 	}
 
-	mystring(const char* w) : c_string(NULL) {
+	mystring(const char* w) {
+		memset(c_string, 0, 32);
+		char* q = c_string;
 		const char* p = w;
-		while(NON_NULL(p))
+		while(NON_NULL(p)) {
+			*q = *p;
 			p++;
+			q++;
+		}
 		int len = p - w;
 		this->len = len;
 
@@ -104,6 +110,7 @@ struct mystring {
 
 	const char* static_str() const{
 		static __thread char c[32];
+		memset(c, 0, 32);
 		for (int i = 0; i < this->len; i++) {
 			char y;
 			if (i % 3 == 0)
@@ -123,11 +130,6 @@ struct mystring {
 	}
 
 	const char* c_str() const{
-		// Please do not use me frequently
-		if (!c_string) {
-			((mystring*)this)->c_string = (char*)MALLOC(32);
-			strcpy(c_string, static_str());
-		}
 		return c_string;
 	}
 	unsigned char codeat0() const {
@@ -153,6 +155,8 @@ typedef std::string mystring;
 #endif
 
 #define ENABLE_HALFSTRING 0
+
+#define ENABLE_FASTEDITDISTANCE 1
 #define ENABLE_HALFSTRING_HAMMING 1
 #if ENABLE_HALFSTRING
 
@@ -255,6 +259,16 @@ int edit(const mystring& a, const mystring& b) {
 	unsigned int oo = 0x7FFFFFFF;
 #if ENABLE_HALFSTRING
 	unsigned int dist = EditDistanceH(a.half_str(), a.length(), b.half_str(), b.length());
+#elif ENABLE_FASTEDITDISTANCE
+	unsigned int dist = FastEditDistance(a.c_str(), a.length(), b.c_str(), b.length());
+#if 0
+	unsigned int dist_should_be = EditDistance(a.c_str(), a.length(), b.c_str(), b.length());
+	unsigned int dist2 = FastEditDistance(a.c_str(), a.length(), b.c_str(), b.length());
+	if (dist != dist_should_be || dist != dist2 || dist2 != dist_should_be) {
+		fprintf(stderr, "WRONG FAST DISTANCE: %s %s %d/%d/%d\n", a.c_str(), b.c_str(), dist, dist_should_be, dist2);
+		exit(1);
+	}
+#endif
 #else
 	unsigned int dist = EditDistance(a.c_str(), a.length(), b.c_str(), b.length());
 #endif
@@ -804,7 +818,7 @@ struct WordRequestResponse {
 
 	struct WordRequestResponse* next;
 	struct WordRequestResponse* resp_next;
-	char __padding[64 - sizeof(mystring) - sizeof(ResultSet*) - 2 * sizeof(struct WordRequestResponse*)];
+	char __padding[128 - sizeof(mystring) - sizeof(ResultSet*) - 2 * sizeof(struct WordRequestResponse*)];
 };
 
 #if 0
@@ -1624,6 +1638,8 @@ void vptree_system_init() {
 		fprintf(logf, "word_feeder_n > WORD_FEEDER_N\n");
 		exit(1);
 	}
+
+	FastEditDistanceBuildIndex();
 
 	ring = NEW(WordRequestResponseRing, req_ring_n);
 
